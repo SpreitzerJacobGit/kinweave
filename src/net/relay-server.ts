@@ -13,6 +13,7 @@ import { fingerprint, verifySig } from '../core/identity';
 import { signedBody, type WireEnvelope } from '../core/transport';
 import type { ClientMsg, ServerMsg } from './wire-protocol';
 import { CommunityBoardStore, handleCommunityMsg } from './community-board';
+import { IntentBoardStore, handleIntentMsg } from './intent-board';
 
 interface Stored {
   mailId: string;
@@ -24,6 +25,7 @@ export class RelayServer {
   private mail = new Map<string, Stored[]>();
   private subs = new Map<string, WebSocket>();
   private board = new CommunityBoardStore();
+  private intents = new IntentBoardStore();
   private counter = 0;
   private mailboxTtlMs = 14 * 24 * 60 * 60 * 1000; // 14 days (sweep hook; unused in MVP tests)
 
@@ -79,12 +81,15 @@ export class RelayServer {
         this.mail.set(authed, q.filter((s) => !m.mailIds.includes(s.mailId)));
       } else if (m.t === 'post_beacon' || m.t === 'sub_community' || m.t === 'unsub_community') {
         handleCommunityMsg(this.board, ws, m, (msg) => ws.send(JSON.stringify(msg)));
+      } else if (m.t === 'post_call' || m.t === 'sub_calls' || m.t === 'unsub_calls') {
+        handleIntentMsg(this.intents, ws, m, (msg) => ws.send(JSON.stringify(msg)));
       }
     });
 
     ws.on('close', () => {
       if (authed && this.subs.get(authed) === ws) this.subs.delete(authed);
       this.board.removeSocket(ws);
+      this.intents.removeSocket(ws);
     });
   }
 
