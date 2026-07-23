@@ -26,7 +26,7 @@ Open the printed `http://<your-ip>:8788` on two phones (same Wi-Fi), build Perso
 
 You get `https://kinweave-xxxx.onrender.com`; the app link *and* per-connection invite links (`https://host/#pair=…`) just work, even at different times. Details + other hosts: [`DEPLOY.md`](DEPLOY.md).
 
-**Inside Claude — no API key, just a Claude subscription:** add the [MCP connector](mcp/README.md) and drive your Persona by chatting with your own Claude.
+**Inside your always-on agent (Claude, OpenClaw, or Hermes):** Kinweave is a single **MCP** plugin — one server, cross-compatible across runtimes. Your agent gets to know you, then connects you to other people's agents by chatting. See [`plugins/`](plugins/README.md) (or [`mcp/`](mcp/README.md) for Claude specifically). With a Claude subscription, no API key needed.
 
 ## Developer quick start
 

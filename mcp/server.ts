@@ -14,13 +14,15 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { Node } from '../src/portable/crypto';
 import { KinweaveAgent } from '../src/portable/agent';
 import { assembleProfile, validateDraft } from '../src/ai/onboarding';
 import type { PrivateProfile } from '../src/types/profile';
+import { emptyStore, upsertConnection, addTag, createGroup, setInGroup, connectionsList, groupsFor, type SocialStore, type Connection } from '../src/portable/social';
 
 const HOME = process.env.KINWEAVE_HOME ?? join(homedir(), '.kinweave');
 const STATE = join(HOME, 'state.json');
@@ -29,6 +31,7 @@ const RELAY = process.env.KINWEAVE_RELAY ?? 'ws://127.0.0.1:8788/relay';
 interface Persisted {
   keys?: { idSeed: string; encSeed: string };
   profile?: PrivateProfile;
+  social?: SocialStore;
 }
 
 function load(): Persisted {
@@ -38,24 +41,32 @@ function load(): Persisted {
     return {};
   }
 }
-function save(s: Persisted): void {
+function save(): void {
   mkdirSync(HOME, { recursive: true });
-  writeFileSync(STATE, JSON.stringify(s, null, 2));
+  writeFileSync(STATE, JSON.stringify({ keys: node.exportSeeds(), profile: profile ?? undefined, social }, null, 2));
 }
 
 const state = load();
 const node = state.keys ? new Node(state.keys) : new Node();
-if (!state.keys) {
-  state.keys = node.exportSeeds();
-  save(state);
-}
 let profile: PrivateProfile | null = state.profile ?? null;
+const social: SocialStore = state.social ?? emptyStore();
 let agent: KinweaveAgent | null = null;
+if (!state.keys) save();
 
 function ensureAgent(): KinweaveAgent {
   if (!profile) throw new Error('Build your Persona first with kinweave_save_persona.');
-  if (!agent) agent = new KinweaveAgent(node, profile, RELAY);
+  if (!agent) {
+    agent = new KinweaveAgent(node, profile, RELAY, (info) => {
+      upsertConnection(social, { id: info.id, name: info.name, when: Date.now(), hangout: info.hangout });
+      save();
+    });
+  }
   return agent;
+}
+
+function findConn(nameOrId: string): Connection | undefined {
+  const q = nameOrId.trim().toLowerCase();
+  return Object.values(social.connections).find((c) => c.id === nameOrId || c.name.toLowerCase() === q);
 }
 
 const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] });
@@ -119,7 +130,7 @@ server.tool(
       contact: a.contact,
     });
     agent = null; // rebuild with the new profile on next connect
-    save({ keys: node.exportSeeds(), profile });
+    save();
     return text(`Persona saved (interests: ${draft.hobbyTags.join(', ')}). Ready to connect.`);
   },
 );
@@ -165,6 +176,64 @@ server.tool(
     if (!agent?.decline()) return text('Nothing is waiting for approval.');
     await agent.waitForNext();
     return text(statusText());
+  },
+);
+
+server.tool(
+  'kinweave_connections',
+  "List the people the user has connected with (arranged a hangout with), their tags, and groups.",
+  {},
+  async () => {
+    const conns = connectionsList(social);
+    if (!conns.length) return text('No connections yet. They appear here after you arrange a hangout with someone.');
+    const lines = conns.map((c) => {
+      const groups = groupsFor(social, c.id).map((g) => g.name);
+      const bits = [c.name];
+      if (c.tags.length) bits.push(`tags: ${c.tags.join(', ')}`);
+      if (groups.length) bits.push(`groups: ${groups.join(', ')}`);
+      if (c.lastHangout) bits.push(`last: ${c.lastHangout}`);
+      return `• ${bits.join(' — ')}`;
+    });
+    return text(lines.join('\n'));
+  },
+);
+
+server.tool(
+  'kinweave_tag_connection',
+  "Add a tag to a connection (by their name or id). Use to organize people, e.g. 'climbing', 'work', 'close-friend'.",
+  { connection: z.string().describe('the connection name or id'), tag: z.string() },
+  async ({ connection, tag }) => {
+    const c = findConn(connection);
+    if (!c) return text(`No connection matching "${connection}".`);
+    addTag(social, c.id, tag);
+    save();
+    return text(`Tagged ${c.name} with "${tag.trim().toLowerCase()}". Tags: ${social.connections[c.id]!.tags.join(', ')}.`);
+  },
+);
+
+server.tool(
+  'kinweave_create_group',
+  'Create a group to organize connections, e.g. "Climbing crew".',
+  { name: z.string() },
+  async ({ name }) => {
+    createGroup(social, name, randomUUID());
+    save();
+    return text(`Created group "${name.trim()}".`);
+  },
+);
+
+server.tool(
+  'kinweave_add_to_group',
+  'Add a connection (by name or id) to a group (by name).',
+  { connection: z.string(), group: z.string() },
+  async ({ connection, group }) => {
+    const c = findConn(connection);
+    if (!c) return text(`No connection matching "${connection}".`);
+    const g = social.groups.find((x) => x.name.toLowerCase() === group.trim().toLowerCase());
+    if (!g) return text(`No group named "${group}". Create it first with kinweave_create_group.`);
+    setInGroup(social, g.id, c.id, true);
+    save();
+    return text(`Added ${c.name} to "${g.name}".`);
   },
 );
 

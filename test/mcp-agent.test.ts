@@ -23,8 +23,10 @@ describe('MCP agent — two devices connect by code and negotiate a hangout', ()
     server = await startServer(0);
     const url = `ws://127.0.0.1:${server.port}/relay`;
 
-    const A = new KinweaveAgent(new Node(), ava, url); // scanner / initiator
-    const B = new KinweaveAgent(new Node(), ben, url); // shows the code / responder
+    const savedA: { id: string; name: string; hangout?: string }[] = [];
+    const savedB: { id: string; name: string; hangout?: string }[] = [];
+    const A = new KinweaveAgent(new Node(), ava, url, (i) => savedA.push(i)); // scanner / initiator
+    const B = new KinweaveAgent(new Node(), ben, url, (i) => savedB.push(i)); // shows the code / responder
 
     const codeB = await B.makeConnectCode();
     await A.useConnectCode(codeB);
@@ -45,6 +47,11 @@ describe('MCP agent — two devices connect by code and negotiate a hangout', ()
     // The committed plan matches the reference negotiation.
     const ref = negotiate(...makePair(ava, ben, approveAll, approveAll));
     expect(A.status().hangout).toContain(ref.artifact!.plan.time.date);
+
+    // A committed hangout is saved as a connection, with the counterpart's disclosed name.
+    expect(savedA[0]?.name).toBe('Ben');
+    expect(savedB[0]?.name).toBe('Ava');
+    expect(savedA[0]?.id).toBeTruthy();
 
     A.close();
     B.close();

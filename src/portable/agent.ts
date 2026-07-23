@@ -61,10 +61,15 @@ export class KinweaveAgent {
   private connState: ConnState = 'idle';
   private waiters: (() => void)[] = [];
 
+  private cpName = '';
+  private cpFp = '';
+
   constructor(
     private readonly node: Node,
     private readonly profile: PrivateProfile,
     private readonly relayUrl: string,
+    /** Called when a hangout commits — the caller persists it as a connection. */
+    private readonly onConnected?: (info: { id: string; name: string; hangout?: string }) => void,
   ) {}
 
   status(): AgentStatus {
@@ -150,6 +155,7 @@ export class KinweaveAgent {
   }
 
   private build(peer: { pubKey: string; encPubKey: string }, counterpartFp: string, role: 'initiator' | 'responder'): Session {
+    this.cpFp = counterpartFp;
     const persona = new Persona(this.profile, counterpartFp, approveAll, new Clock(), {});
     const driver = new NegotiationDriver(persona, counterpartFp, role);
     return new Session(this.node, driver, peer, {
@@ -159,10 +165,15 @@ export class KinweaveAgent {
         this.connState = 'negotiating';
         this.notify();
       },
+      onMessage: (m) => {
+        const fn = (m.payload as Record<string, unknown>).firstName;
+        if (m.type === 'DISCLOSE' && typeof fn === 'string') this.cpName = fn;
+      },
       onTerminal: (t) => {
         this.terminal = t;
         this.pendingGate = null;
         this.connState = 'done';
+        if (t.outcome === 'committed' && this.cpFp) this.onConnected?.({ id: this.cpFp, name: this.cpName, hangout: describeHangout(t.artifact) });
         this.notify();
       },
     });
