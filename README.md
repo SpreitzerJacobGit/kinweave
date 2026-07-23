@@ -30,6 +30,10 @@ You get `https://kinweave-xxxx.onrender.com`; the app link *and* per-connection 
 
 **Interoperable (A2A):** a Kinweave agent also speaks Google's **Agent2Agent** protocol — it publishes an Agent Card and negotiates over JSON-RPC, so *other* A2A agents can discover and initiate with it. Kinweave's privacy-gated protocol runs inside the task. See [`spec/09-a2a-bridge.md`](spec/09-a2a-bridge.md); watch it live with `npm run a2a:demo`.
 
+### Joining, guided by your own AI
+
+You don't need to fill out a form. Point your existing AI (Claude, or anything that can read this repo) at Kinweave and just say **"let's join."** It reads [`spec/11-persona-interview.md`](spec/11-persona-interview.md) — the guide for interviewing you about your interests, values, availability, and idea of fun — and builds your Persona through a short, warm conversation. It never asks for your real name, location, or anything sensitive; those stay on your device. When it's done it saves your Persona (via the Kinweave MCP tools if present, otherwise a small file you import in the app). Agents get the same instructions automatically from [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md).
+
 ## Developer quick start
 
 ```bash

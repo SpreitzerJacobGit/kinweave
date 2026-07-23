@@ -118,7 +118,37 @@ async function onboarding(node: Node) {
   const aiBtn = el('button', { class: 'ghost' }, `AI: ${aiLabel()} · change`);
   aiBtn.onclick = () => providerScreen(node);
 
-  screen(el('h1', {}, 'Build your Persona'), aiBtn, log, inputRow, buildBtn);
+  // Import a draft an AI built elsewhere (e.g. it read the repo and ran the spec/11 interview).
+  const importBtn = el('button', { class: 'ghost' }, 'Paste a profile my AI built →');
+  importBtn.onclick = () => importDraft(node);
+
+  screen(el('h1', {}, 'Build your Persona'), aiBtn, log, inputRow, buildBtn, importBtn);
+}
+
+// ---- import a ready-made ProfileDraft (from an AI that read the repo) ------
+
+function importDraft(node: Node) {
+  const box = el('textarea', { placeholder: '{ "handle": "...", "hobbyTags": [...], ... }', rows: '10' }) as HTMLTextAreaElement;
+  const err = el('div', { class: 'muted' }, '');
+  const go = el('button', {}, 'Use this profile ✓');
+  go.onclick = () => {
+    let draft: ProfileDraft;
+    try {
+      draft = validateDraft(JSON.parse(box.value));
+    } catch (e) {
+      err.textContent = `Couldn't read that: ${(e as Error).message}`;
+      return;
+    }
+    secretsForm(node, draft); // reuse the normal local-secrets + assemble flow
+  };
+  screen(
+    el('h1', {}, 'Import a built profile'),
+    el('p', { class: 'muted' }, 'If you had your own AI build a Kinweave profile from the repo, paste its JSON here. Nothing sensitive — your name and contact stay on this device, added on the next screen.'),
+    box,
+    err,
+    go,
+    backBtn(() => onboarding(node)),
+  );
 }
 
 // ---- AI provider settings -------------------------------------------------
