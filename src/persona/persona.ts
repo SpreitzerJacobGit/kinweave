@@ -100,11 +100,16 @@ export class Persona {
 
   // ---- owner-in-the-loop -----------------------------------------------------
 
-  /** Ask the owner to approve a gate. On approval of G1–G4 an append-only
-   *  consent-grant is recorded; its id authorizes any subsequent disclosure. */
-  requestConsent(req: GateRequest): { decision: GateDecision; grantId?: string } {
-    const decision = this.policy(req);
-    if (!decision.approve || decision.defer) return { decision };
+  /** Evaluate a gate WITHOUT side effects. In the sim this consults the owner
+   *  policy; in the real app the human's tap supplies the decision instead. */
+  decideGate(req: GateRequest): GateDecision {
+    return this.policy(req);
+  }
+
+  /** Record an approved gate: append the consent-grant (+ any level-change) and
+   *  return the grant id that authorizes subsequent disclosure. Call ONLY after
+   *  a positive decision — this is the effectful half of an owner gate. */
+  recordGrant(req: GateRequest): string {
     const grant = this.ledger.append({
       type: 'consent-grant',
       gate: req.gate,
@@ -123,7 +128,16 @@ export class Persona {
         authorizingConsent: grant.id,
       });
     }
-    return { decision, grantId: grant.id };
+    return grant.id;
+  }
+
+  /** Ask the owner to approve a gate (sim convenience = decide + record). On
+   *  approval an append-only consent-grant is recorded; its id authorizes
+   *  subsequent disclosure. The async driver uses decideGate + recordGrant. */
+  requestConsent(req: GateRequest): { decision: GateDecision; grantId?: string } {
+    const decision = this.decideGate(req);
+    if (!decision.approve || decision.defer) return { decision };
+    return { decision, grantId: this.recordGrant(req) };
   }
 
   // ---- inbound (untrusted) ---------------------------------------------------

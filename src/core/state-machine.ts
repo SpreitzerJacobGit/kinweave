@@ -11,16 +11,9 @@ import { Tier } from '../types/disclosure';
 import type { AbandonCode, Message, Stage } from '../types/envelope';
 import type { ProposedHangout } from '../types/artifact';
 import type { Persona } from '../persona/persona';
+import { buildArtifact, Caps, CommitBook, DEFAULT_CAPS, FACE_SAVING, intersect } from './negotiation-core';
 
-export interface Caps {
-  probe: number;
-  align: number;
-  coplan: number;
-  owner: number;
-  messageBudget: number;
-}
-
-export const DEFAULT_CAPS: Caps = { probe: 2, align: 3, coplan: 4, owner: 2, messageBudget: 40 };
+export { Caps, CommitBook, DEFAULT_CAPS } from './negotiation-core';
 
 export interface NegotiationResult {
   outcome: 'committed' | 'abandoned';
@@ -32,32 +25,6 @@ export interface NegotiationResult {
   rounds: { probe: number; align: number; coplan: number; owner: number };
   channel: Channel;
 }
-
-/** Idempotent two-phase commit book, keyed on artifact hash. */
-export class CommitBook {
-  private done = new Set<string>();
-  confirm(hash: string): 'committed' | 'duplicate' {
-    if (this.done.has(hash)) return 'duplicate';
-    this.done.add(hash);
-    return 'committed';
-  }
-  size(): number {
-    return this.done.size;
-  }
-}
-
-const FACE_SAVING: Record<AbandonCode, string> = {
-  declined: 'Not available to connect right now.',
-  timeout: "Couldn't connect in time.",
-  low_match: 'No strong match right now.',
-  archetype_mismatch: "Doesn't look like a fit right now.",
-  disclosure_refused: "Can't share enough to plan this right now.",
-  no_feasible_plan: "Couldn't find a time that works right now.",
-  owner_declined: "Can't make this one work.",
-  owner_timeout: "Couldn't confirm in time.",
-  commit_failed: "Couldn't finalize this one.",
-  budget_exhausted: "Let's try again another time.",
-};
 
 export function negotiate(a: Persona, b: Persona, caps: Caps = DEFAULT_CAPS, channelId = 'ch-1'): NegotiationResult {
   const channel = new Channel(channelId);
@@ -177,7 +144,20 @@ export function negotiate(a: Persona, b: Persona, caps: Caps = DEFAULT_CAPS, cha
 
   // ---- S6 OWNER_REVIEW (Gate G4: the hard commitment gate, both owners) ------
   stages.push('S6');
-  const artifact = buildArtifact(accepted, a, b, stages, rounds, channel, mA.band ?? 'medium');
+  const artifact = buildArtifact({
+    proposal: accepted,
+    selfHandle: a.handle,
+    selfOwnerId: a.ownerId,
+    counterpartHandle: b.handle,
+    counterpartOwnerId: b.ownerId,
+    selfRevealedKeys: a.revealedKeys(),
+    counterpartRevealedKeys: b.revealedKeys(),
+    transcript: channel.transcript(),
+    stages,
+    rounds,
+    transcriptRef: channel.channelId,
+    band: mA.band ?? 'medium',
+  });
   rounds.owner += 1;
   const g4a = a.requestConsent({ gate: 'G4', counterpart: b.ownerId, artifact });
   const g4b = b.requestConsent({ gate: 'G4', counterpart: a.ownerId, artifact });
@@ -215,113 +195,4 @@ export function negotiate(a: Persona, b: Persona, caps: Caps = DEFAULT_CAPS, cha
   stages.push('S8');
   artifact.status = 'committed';
   return { outcome: 'committed', artifact, stagesTraversed: stages, rounds, channel };
-}
-
-// ---------------------------------------------------------------------------
-
-function intersect(a: string[], b: string[]): string[] {
-  const bs = new Set(b);
-  return a.filter((x) => bs.has(x));
-}
-
-/** Merge the fields a given persona disclosed on the channel (public-to-both). */
-function collectDisclosed(channel: Channel, fromHandle: string): Record<string, unknown> {
-  const merged: Record<string, unknown> = {};
-  for (const m of channel.transcript()) {
-    if (m.env.fromPersona !== fromHandle) continue;
-    if (m.type === 'SIGNAL' || m.type === 'DISCLOSE' || m.type === 'INTENT_FRAME') {
-      Object.assign(merged, m.payload);
-    }
-  }
-  return merged;
-}
-
-/** Simple deterministic string hash (djb2) — no crypto/time needed for the sim. */
-function hashPlan(input: unknown): string {
-  const s = JSON.stringify(input);
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
-  return `v${h.toString(16)}`;
-}
-
-function buildArtifact(
-  proposal: Message,
-  a: Persona,
-  b: Persona,
-  stages: Stage[],
-  rounds: { probe: number; align: number; coplan: number; owner: number },
-  channel: Channel,
-  band: 'low' | 'medium' | 'high',
-): ProposedHangout {
-  const dA = collectDisclosed(channel, a.handle);
-  const dB = collectDisclosed(channel, b.handle);
-  const venue = proposal.payload.venueCandidate as { name?: string; type?: string; geoCell?: string; isPublic?: boolean };
-  const slot = proposal.payload.timeSlot as { date: string; start: string; end: string; timezone: string };
-
-  const hobbyA = (dA.hobbyTags as string[]) ?? [];
-  const hobbyB = (dB.hobbyTags as string[]) ?? [];
-  const sharedHobbies = hobbyA.filter((t) => new Set(hobbyB).has(t));
-  const valA = (dA.valueTags as string[]) ?? [];
-  const valB = (dB.valueTags as string[]) ?? [];
-  const sharedValues = valA.filter((t) => new Set(valB).has(t));
-  const energyA = dA.energyLevel as string | undefined;
-  const energyB = dB.energyLevel as string | undefined;
-
-  const conflicts: string[] = [];
-  if (energyA && energyB && energyA !== energyB) {
-    conflicts.push(`energy mismatch: ${a.handle}=${energyA}, ${b.handle}=${energyB}`);
-  }
-
-  const overall = band === 'high' ? 0.8 : band === 'medium' ? 0.6 : 0.4;
-  const label = overall >= 0.75 ? 'high' : overall >= 0.5 ? 'moderate' : 'low';
-
-  const caveats = ['First meetup — limited shared history; confidence is provisional.'];
-  if (conflicts.length) caveats.push('There is at least one value/energy conflict — see axes.');
-
-  const plan = {
-    activity: {
-      class: (proposal.text ?? '').includes('games') ? 'games' : (sharedHobbies[0] ?? 'shared activity'),
-      specific: proposal.text ?? 'a shared activity',
-      whyThis: sharedHobbies.length ? `Both list: ${sharedHobbies.join(', ')}.` : 'Overlapping archetype.',
-    },
-    place: {
-      type: venue?.type ?? 'public venue',
-      name: venue?.name,
-      geoCell: venue?.geoCell ?? 'downtown-commons',
-      isPublic: venue?.isPublic === true,
-      accessibilityNotes: 'Public, daytime, staffed where possible.',
-    },
-    time: slot,
-    estCostBand: 'low' as const,
-    logisticsNotes: ['Public place, daytime first meetup.'],
-  };
-
-  return {
-    artifactId: `hangout-${a.ownerId}-${b.ownerId}`,
-    versionHash: hashPlan(plan),
-    status: 'pending_review',
-    plan,
-    compatibilityRationale: {
-      overallConfidence: overall,
-      label,
-      axes: {
-        interestOverlap: { score: Math.min(1, sharedHobbies.length * 0.34), evidence: sharedHobbies, conflicts: [] },
-        valueAlignment: { score: Math.min(1, sharedValues.length * 0.34), evidence: sharedValues, conflicts },
-        scheduleFit: { score: 0.7, evidence: [slot?.date ?? 'agreed slot'] },
-        geoConvenience: { score: 0.7, evidence: [venue?.geoCell ?? 'neutral cell'] },
-      },
-      honestCaveats: caveats,
-      noveltyFlag: sharedHobbies.length <= 1,
-    },
-    disclosureLedger: {
-      myRevealed: a.revealedKeys(),
-      theirRevealed: b.revealedKeys(),
-      stillPrivate: ['homeCoordinate', 'legalName', 'interestVector', 'personaMemory'],
-    },
-    provenance: {
-      stagesTraversed: [...stages],
-      roundsUsed: { ...rounds },
-      transcriptRef: channel.channelId,
-    },
-  };
 }
