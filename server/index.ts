@@ -18,7 +18,7 @@ import { networkInterfaces } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { fingerprint, signedBody, verifySig, type WireEnvelope } from '../src/portable/crypto';
 import type { ClientMsg, ServerMsg } from '../src/portable/wire-protocol';
-import { AnthropicLLM } from '../src/ai/llm';
+import { makeLLM, type ProviderConfig } from '../src/ai/providers';
 import { runOnboardingTurn, extractDraft } from '../src/ai/onboarding';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -113,15 +113,29 @@ function serveFile(res: ServerResponse, path: string): void {
   res.end(readFileSync(path));
 }
 
+/** The host's default provider, if the deployer set one. */
+function hostLLMConfig(): ProviderConfig | null {
+  const p = process.env.LLM_PROVIDER;
+  const k = process.env.LLM_API_KEY;
+  if (p && k) return { provider: p, apiKey: k, model: process.env.LLM_MODEL, baseURL: process.env.LLM_BASE_URL };
+  if (process.env.ANTHROPIC_API_KEY) return { provider: 'anthropic', apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.LLM_MODEL };
+  return null;
+}
+
 async function handleOnboard(req: IncomingMessage, res: ServerResponse, kind: 'chat' | 'extract'): Promise<void> {
-  if (!process.env.ANTHROPIC_API_KEY) {
+  const body = JSON.parse((await readBody(req)) || '{}') as {
+    messages: { role: 'user' | 'assistant'; content: string }[];
+    provider?: ProviderConfig; // per-user "bring your own key"
+  };
+  // Per-user key wins; otherwise the host's default; otherwise no AI.
+  const cfg = body.provider?.apiKey ? body.provider : hostLLMConfig();
+  if (!cfg) {
     res.writeHead(501, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: 'ANTHROPIC_API_KEY not set on the server' }));
+    res.end(JSON.stringify({ error: 'no_ai', message: 'No AI provider configured. Choose one in the app (bring your own key), or set LLM_PROVIDER + LLM_API_KEY (or ANTHROPIC_API_KEY) on the server.' }));
     return;
   }
   try {
-    const body = JSON.parse((await readBody(req)) || '{}') as { messages: { role: 'user' | 'assistant'; content: string }[] };
-    const llm = new AnthropicLLM();
+    const llm = makeLLM(cfg);
     if (kind === 'chat') {
       const reply = await runOnboardingTurn(llm, body.messages);
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ reply }));
@@ -179,6 +193,7 @@ if (invokedDirectly) {
     process.stdout.write(`\nKinweave running. Open on your phones (same Wi-Fi):\n`);
     for (const u of lanUrls(port)) process.stdout.write(`   ${u}\n`);
     process.stdout.write(`   (local: http://localhost:${port})\n`);
-    process.stdout.write(process.env.ANTHROPIC_API_KEY ? `Claude onboarding: ON\n\n` : `Claude onboarding: OFF (set ANTHROPIC_API_KEY to enable)\n\n`);
+    const host = hostLLMConfig();
+    process.stdout.write(host ? `AI onboarding: ON (host default: ${host.provider})\n\n` : `AI onboarding: OFF (users bring their own key, or set LLM_PROVIDER+LLM_API_KEY / ANTHROPIC_API_KEY)\n\n`);
   });
 }

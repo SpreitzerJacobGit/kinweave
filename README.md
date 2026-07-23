@@ -14,7 +14,8 @@ It has since grown into a runnable app — a phone web app, a Claude connector, 
 **On your phone (web app):**
 ```bash
 npm install
-export ANTHROPIC_API_KEY=sk-ant-...   # Claude onboarding (optional; falls back to a form)
+export ANTHROPIC_API_KEY=sk-ant-...   # optional AI onboarding — or LLM_PROVIDER+LLM_API_KEY
+                                      # (openai | zai | moonshot | qwen), or users bring their own key
 npm start                             # builds the app + runs the server; prints LAN URLs
 ```
 Open the printed `http://<your-ip>:8788` on two phones (same Wi-Fi), build Personas, and connect by QR or an invite link.

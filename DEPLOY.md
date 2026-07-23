@@ -6,9 +6,24 @@ address only works for people on the same network). Hosting also unlocks
 the app + the untrusted relay + the Claude proxy, all in `server/index.ts`. It
 reads `PORT` from the host and binds `0.0.0.0`, so most hosts run it as-is.
 
-Set **`ANTHROPIC_API_KEY`** in the host's env for the Claude onboarding chat
-(without it, onboarding falls back to a quick form). That key is used only for
-new users' onboarding — the relay stays peer-to-peer and never sees plaintext.
+## Choose the AI (onboarding chat)
+
+The AI only builds each user's Persona from a chat — the relay stays P2P and never
+sees it. Three ways to power it (any/all):
+
+- **Host default (one key for everyone).** Set on the host:
+  - `LLM_PROVIDER` = `anthropic` | `openai` | `zai` | `moonshot` | `qwen`
+  - `LLM_API_KEY` = that provider's key
+  - `LLM_MODEL` (optional override), `LLM_BASE_URL` (optional override)
+  - Shortcut: just set `ANTHROPIC_API_KEY` (= provider `anthropic`).
+- **Bring your own key (per user).** Leave the host key unset (or let users
+  override): in the app, **AI: … · change** → pick a provider and paste a key. It's
+  stored on their device and sent only to your server for the call.
+- **Claude subscription (no API key).** Those users use the
+  [Claude connector](mcp/README.md) instead — their own Claude is the brain.
+
+The one-click button below deploys with **Anthropic** as the default; switch
+providers by changing the `LLM_*` env vars in the dashboard.
 
 ## Render (easiest, free)
 

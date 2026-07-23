@@ -19,6 +19,7 @@ import type { PrivateProfile } from '../src/types/profile';
 import type { GateRequest } from '../src/persona/owner';
 import type { ProposedHangout } from '../src/types/artifact';
 import type { DriverTerminal } from '../src/types/negotiation';
+import { PROVIDERS, type ProviderConfig } from '../src/ai/provider-list';
 
 // ---- storage (Zone O stays here) ------------------------------------------
 
@@ -32,6 +33,12 @@ function loadNode(): Node {
 }
 const loadProfile = (): PrivateProfile | null => JSON.parse(LS.getItem('kw_profile') ?? 'null');
 const saveProfile = (p: PrivateProfile) => LS.setItem('kw_profile', JSON.stringify(p));
+const getProvider = (): ProviderConfig | null => JSON.parse(LS.getItem('kw_provider') ?? 'null');
+const saveProvider = (c: ProviderConfig) => LS.setItem('kw_provider', JSON.stringify(c));
+const aiLabel = () => {
+  const p = getProvider();
+  return p?.apiKey ? PROVIDERS[p.provider]?.label ?? p.provider : "the app's AI";
+};
 
 // ---- tiny DOM helpers -----------------------------------------------------
 
@@ -74,8 +81,8 @@ async function onboarding(node: Node) {
     history.push({ role: 'user', content: text });
     bubble('me', text);
     try {
-      const r = await fetch('/api/onboard', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: history }) });
-      if (r.status === 501) return bubble('ai', 'Claude onboarding is off (no API key on the server). Tap "Build my Persona" to use the quick form instead.');
+      const r = await fetch('/api/onboard', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: history, provider: getProvider() ?? undefined }) });
+      if (r.status === 501) return bubble('ai', 'No AI is set up yet. Tap the "AI:" button above to pick a provider (or use your Claude subscription), or tap "Build my Persona" for the quick form.');
       const { reply } = await r.json();
       history.push({ role: 'assistant', content: reply });
       bubble('ai', reply);
@@ -88,7 +95,7 @@ async function onboarding(node: Node) {
   buildBtn.onclick = async () => {
     let draft: ProfileDraft | null = null;
     try {
-      const r = await fetch('/api/extract', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: history }) });
+      const r = await fetch('/api/extract', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: history, provider: getProvider() ?? undefined }) });
       if (r.ok) draft = validateDraft((await r.json()).draft);
     } catch {
       /* fall through to manual form */
@@ -104,7 +111,75 @@ async function onboarding(node: Node) {
   };
   inputRow.append(input, sendBtn);
 
-  screen(el('h1', {}, 'Build your Persona'), log, inputRow, buildBtn);
+  const aiBtn = el('button', { class: 'ghost' }, `AI: ${aiLabel()} · change`);
+  aiBtn.onclick = () => providerScreen(node);
+
+  screen(el('h1', {}, 'Build your Persona'), aiBtn, log, inputRow, buildBtn);
+}
+
+// ---- AI provider settings -------------------------------------------------
+
+function backBtn(fn: () => void): HTMLElement {
+  const b = el('button', { class: 'ghost' }, 'Back');
+  b.onclick = fn;
+  return b;
+}
+
+function providerScreen(node: Node) {
+  const cur = getProvider();
+  const list = el('div', {});
+  for (const [id, p] of Object.entries(PROVIDERS)) {
+    const b = el('button', { class: cur?.provider === id ? '' : 'ghost' }, p.label);
+    b.onclick = () => keyForm(node, id);
+    list.append(b);
+  }
+  const useDefault = el('button', { class: 'ghost' }, "Use the app's built-in AI (if the host set one)");
+  useDefault.onclick = () => {
+    LS.removeItem('kw_provider');
+    onboarding(node);
+  };
+  const sub = el('button', { class: 'ghost' }, 'Only have a Claude subscription? →');
+  sub.onclick = () => connectorInfo(node);
+  screen(
+    el('h1', {}, 'Choose your AI'),
+    el('p', { class: 'muted' }, 'This builds your Persona from your chat. Your key is stored on your phone and sent only to your Kinweave server.'),
+    list,
+    useDefault,
+    sub,
+    backBtn(() => onboarding(node)),
+  );
+}
+
+function keyForm(node: Node, id: string) {
+  const p = PROVIDERS[id]!;
+  const cur = getProvider();
+  const key = el('input', { placeholder: p.keyHint, type: 'password' }) as HTMLInputElement;
+  key.value = cur?.provider === id ? cur.apiKey : '';
+  const model = el('input', { placeholder: `model (default: ${p.defaultModel})` }) as HTMLInputElement;
+  const base = el('input', { placeholder: `base URL (default: ${p.baseURL})` }) as HTMLInputElement;
+  const save = el('button', {}, 'Save & use');
+  save.onclick = () => {
+    saveProvider({ provider: id, apiKey: key.value.trim(), model: model.value.trim() || undefined, baseURL: base.value.trim() || undefined });
+    onboarding(node);
+  };
+  screen(
+    el('h1', {}, p.label),
+    el('p', { class: 'muted' }, 'Paste your API key. Model and base URL are optional — leave blank for the defaults.'),
+    key,
+    model,
+    base,
+    save,
+    backBtn(() => providerScreen(node)),
+  );
+}
+
+function connectorInfo(node: Node) {
+  screen(
+    el('h1', {}, 'Use your Claude subscription'),
+    el('p', { class: 'muted' }, "A Claude subscription can't power a website directly — but you can run Kinweave INSIDE Claude. Add the Kinweave connector to Claude Desktop or Claude Code and just chat with your own Claude. Setup guide:"),
+    el('div', { class: 'link' }, 'github.com/SpreitzerJacobGit/kinweave/blob/master/mcp/README.md'),
+    backBtn(() => providerScreen(node)),
+  );
 }
 
 // ---- secrets form (local; never sent to the LLM) --------------------------
