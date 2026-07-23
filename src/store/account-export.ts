@@ -10,6 +10,7 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
 import type { LedgerEvent } from '../types/consent';
 import type { PrivateProfile } from '../types/profile';
+import type { Attestation } from '../types/attestation';
 import type { DeviceStore, KeySeeds } from './types';
 
 export interface AccountBundle {
@@ -17,6 +18,8 @@ export interface AccountBundle {
   keys: KeySeeds;
   profile: PrivateProfile | null;
   ledger: LedgerEvent[];
+  /** Attestation credentials — travel so trust survives a device move (optional). */
+  attestations?: Attestation[];
 }
 
 /** Read a full account snapshot out of a device store. */
@@ -28,6 +31,7 @@ export async function exportAccount(store: DeviceStore): Promise<AccountBundle> 
     keys,
     profile: await store.profile.loadProfile(),
     ledger: await store.ledger.allEvents(),
+    attestations: store.attestations ? await store.attestations.all() : undefined,
   };
 }
 
@@ -36,6 +40,7 @@ export async function importAccount(store: DeviceStore, bundle: AccountBundle): 
   await store.keys.saveKeys(bundle.keys);
   if (bundle.profile) await store.profile.saveProfile(bundle.profile);
   await store.ledger.replaceEvents(bundle.ledger);
+  if (bundle.attestations && store.attestations) await store.attestations.replace(bundle.attestations);
 }
 
 interface SealedAccount {

@@ -5,6 +5,7 @@
 
 import type { LedgerEvent } from '../types/consent';
 import type { PrivateProfile } from '../types/profile';
+import type { Attestation } from '../types/attestation';
 import type { DeviceStore, KeySeeds } from './types';
 
 export class MemoryDeviceStore implements DeviceStore {
@@ -13,6 +14,7 @@ export class MemoryDeviceStore implements DeviceStore {
   private _events: LedgerEvent[] = [];
   private _blocks = new Set<string>();
   private _cooldowns = new Map<string, number>();
+  private _attestations: Attestation[] = [];
 
   keys = {
     loadKeys: async () => this._keys,
@@ -46,6 +48,16 @@ export class MemoryDeviceStore implements DeviceStore {
     cooldownUntil: async (ownerId: string) => this._cooldowns.get(ownerId) ?? null,
     setCooldown: async (ownerId: string, untilMs: number) => {
       this._cooldowns.set(ownerId, untilMs);
+    },
+  };
+
+  attestations = {
+    all: async () => this._attestations.map((a) => ({ ...a })),
+    add: async (a: Attestation) => {
+      this._attestations.push({ ...a });
+    },
+    replace: async (list: readonly Attestation[]) => {
+      this._attestations = list.map((a) => ({ ...a }));
     },
   };
 }
