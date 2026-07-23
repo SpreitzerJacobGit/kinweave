@@ -42,7 +42,9 @@ export function startA2AServer(bridge: A2ABridge, port = 0, host = '127.0.0.1'):
     http.listen(port, host, () => {
       const addr = http.address();
       const p = typeof addr === 'object' && addr ? addr.port : port;
-      bridge.url = `http://${host}:${p}/`;
+      // Advertise a routable address (never 0.0.0.0); a deploy can override with KINWEAVE_A2A_URL.
+      const advHost = host === '0.0.0.0' ? '127.0.0.1' : host;
+      bridge.url = process.env.KINWEAVE_A2A_URL ?? `http://${advHost}:${p}/`;
       resolve({ port: p, url: bridge.url, close: () => new Promise((r) => http.close(() => r())) });
     });
   });

@@ -12,6 +12,7 @@
     "serve": "tsx server/index.ts",
     "mcp": "tsx mcp/server.ts",
     "a2a:demo": "tsx src/a2a/demo.ts",
+    "a2a:serve": "tsx src/a2a/serve.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
