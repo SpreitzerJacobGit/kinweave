@@ -14,13 +14,18 @@
  * the community seed", not raw count — without changing this file's callers.
  */
 
-import { verifyAttestation } from './attestation';
+import { verifyAttestation, issuerId } from './attestation';
 import type { Attestation, AttestationType, TrustPolicy } from '../types/attestation';
 
 export interface PolicyCtx {
   now: number;
   /** Community-wide accepted issuer keys (e.g. for `unique-human` PoP tokens). */
   issuerAllowList?: string[];
+  /**
+   * The holder the bundle is about. When set, only attestations whose `subject`
+   * matches are counted — the joiner cannot present credentials about others.
+   */
+  subject?: string;
   /**
    * Optional override for how much vouch "count" a bundle is worth — supplied by
    * the trust-graph scorer once it exists. Returns an effective count.
@@ -53,6 +58,8 @@ export const defaultLeafEvaluator: LeafEvaluator = (leaf, bundle, ctx) => {
   const issuers = new Set<string>();
   for (const a of bundle) {
     if (a.type !== leaf.require) continue;
+    if (ctx.subject !== undefined && a.subject !== ctx.subject) continue; // subject-bound to the joiner
+    if (issuerId(a) === a.subject) continue; // a self-issued credential proves nothing
     if (!verifyAttestation(a, ctx.now)) continue;
     if (allow && !allow.includes(a.issuer)) continue;
     if (leaf.maxAgeMs !== undefined && a.issuedAt < ctx.now - leaf.maxAgeMs) continue;

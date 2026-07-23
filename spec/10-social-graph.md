@@ -137,6 +137,17 @@ changing callers.
   the existing gated pairwise negotiation to a committed hangout. The board holds
   only signed T0 beacons; the enforcement (trust-policy) hook defaults to
   allow-all here.
-- **Next:** co-presence + vouch + the enforcement seam wired into
-  `checkCommunity` before G1 (Milestone 3), PWA/MCP surfaces (4), and the blinded
-  PoP issuer (5).
+- **Milestone 3 (this PR):** the trust engine + enforcement. Co-presence
+  attestations (`src/portable/co-presence.ts`, mutual & non-self-mintable); vouch
+  / vouch-revoke (`src/portable/vouch.ts`); the seeded-flow scorer
+  (`src/portable/trust-graph.ts`, `TrustScorer`); and the connect gate
+  (`src/portable/community-gate.ts`) wired into `src/core/negotiation-driver.ts`
+  `checkCommunity` — the joiner's bundle + declared identity ride the sealed
+  HELLO, the receiver runs the policy, and a failure is `abandon('policy_unmet')`
+  BEFORE G1. Opt-in `TrustWiring`; plain pairwise negotiations are byte-identical
+  (parity/protocol/e2e unaffected). The trust-policy evaluator is now subject-bound
+  and rejects self-issued credentials. Binding the declared subject to the actual
+  sealed-sender key is the one piece deferred to the Session (M4).
+- **Next:** PWA/MCP surfaces — community create/join/members + wiring the real
+  attestation bundle from the store into the HELLO and the Session subject-bind
+  (Milestone 4); the blinded PoP issuer, VOPRF on @noble ristretto (Milestone 5).

@@ -52,6 +52,7 @@ export const FACE_SAVING: Record<AbandonCode, string> = {
   owner_timeout: "Couldn't confirm in time.",
   commit_failed: "Couldn't finalize this one.",
   budget_exhausted: "Let's try again another time.",
+  policy_unmet: "Not connectable in this community yet.",
 };
 
 export function intersect(a: string[], b: string[]): string[] {

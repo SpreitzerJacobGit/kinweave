@@ -17,6 +17,22 @@ import type { Persona } from '../persona/persona';
 import type { DriverEvent, DriverOutput, DriverTerminal, Role } from '../types/negotiation';
 import { buildArtifact, Caps, DEFAULT_CAPS, FACE_SAVING, intersect } from './negotiation-core';
 import type { GateRequest } from '../persona/owner';
+import type { Attestation } from '../types/attestation';
+
+/**
+ * Optional community-trust wiring (spec/10 §4). When a negotiation happens inside
+ * a community, the joiner carries its attestation bundle in the sealed HELLO and
+ * the receiver runs `connectGate` on it BEFORE G1. Omitted for plain pairwise
+ * negotiations, which behave exactly as before.
+ */
+export interface TrustWiring {
+  /** This node's own bundle to attach to its outbound HELLO/HELLO_ACK. */
+  selfAttestations?: Attestation[];
+  /** This node's fingerprint, declared alongside its bundle so the peer can subject-bind it. */
+  selfSubject?: string;
+  /** Gate the counterpart's declared identity + bundle; false → abandon('policy_unmet') before G1. */
+  connectGate?: (subjectFp: string, bundle: Attestation[]) => boolean;
+}
 
 interface Flags {
   sentHello: boolean; gotHello: boolean; sentAck: boolean; gotAck: boolean;
@@ -83,6 +99,7 @@ export class NegotiationDriver {
     private readonly role: Role,
     private readonly negId = 'neg-1',
     private readonly caps: Caps = DEFAULT_CAPS,
+    private readonly trust: TrustWiring = {},
   ) {}
 
   /** Process one event and return anything to emit / surface. */
@@ -164,7 +181,22 @@ export class NegotiationDriver {
 
   private checkCommunity(msg: Message): void {
     const theirs = msg.payload.community as string | undefined;
-    if (theirs && theirs !== this.persona.publicCard().community) this.abandon('low_match');
+    if (theirs && theirs !== this.persona.publicCard().community) return this.abandon('low_match');
+    // Community trust policy (spec/10 §4): the joiner's bundle rides in the sealed
+    // HELLO; gate connectability here, BEFORE G1. No gate configured → no-op.
+    if (this.trust.connectGate) {
+      const bundle = (msg.payload.attestations as Attestation[] | undefined) ?? [];
+      const subject = (msg.payload.subject as string | undefined) ?? '';
+      if (!this.trust.connectGate(subject, bundle)) this.abandon('policy_unmet');
+    }
+  }
+
+  /** Attach this node's declared identity + attestation bundle to an outbound HELLO/HELLO_ACK. */
+  private withAttestations(msg: Message): Message {
+    const p = msg.payload as Record<string, unknown>;
+    if (this.trust.selfAttestations && this.trust.selfAttestations.length) p.attestations = this.trust.selfAttestations;
+    if (this.trust.selfSubject) p.subject = this.trust.selfSubject;
+    return msg;
   }
 
   // ---- the drive loop --------------------------------------------------------
@@ -180,12 +212,12 @@ export class NegotiationDriver {
     const f = this.f;
     // S1 handshake
     if (this.role === 'initiator' && !f.sentHello) {
-      this.emit(this.persona.hello(this.counterpartOwnerId));
+      this.emit(this.withAttestations(this.persona.hello(this.counterpartOwnerId)));
       f.sentHello = true;
       return true;
     }
     if (this.role === 'responder' && f.gotHello && !f.sentAck) {
-      this.emit(this.persona.helloAck(this.transcript[this.transcript.length - 1]?.env.msgId ?? ''));
+      this.emit(this.withAttestations(this.persona.helloAck(this.transcript[this.transcript.length - 1]?.env.msgId ?? '')));
       f.sentAck = true;
       return true;
     }
