@@ -20,6 +20,7 @@ import type { GateRequest } from '../src/persona/owner';
 import type { ProposedHangout } from '../src/types/artifact';
 import type { DriverTerminal } from '../src/types/negotiation';
 import { PROVIDERS, type ProviderConfig } from '../src/ai/provider-list';
+import { emptyStore, upsertConnection, renameConnection, addTag, removeTag, deleteConnection, createGroup, deleteGroup, setInGroup, connectionsList, type SocialStore } from '../src/portable/social';
 
 // ---- storage (Zone O stays here) ------------------------------------------
 
@@ -39,6 +40,8 @@ const aiLabel = () => {
   const p = getProvider();
   return p?.apiKey ? PROVIDERS[p.provider]?.label ?? p.provider : "the app's AI";
 };
+const loadSocial = (): SocialStore => JSON.parse(LS.getItem('kw_social') ?? 'null') ?? emptyStore();
+const saveSocial = (s: SocialStore) => LS.setItem('kw_social', JSON.stringify(s));
 
 // ---- tiny DOM helpers -----------------------------------------------------
 
@@ -262,19 +265,150 @@ function home(node: Node) {
 
   const connect = el('button', {}, '🔗 Connect / invite someone');
   connect.onclick = () => connectScreen(node, p);
+  const dash = el('button', { class: 'ghost' }, '👥 Connections');
+  dash.onclick = () => connectionsScreen(node);
   const reset = el('button', { class: 'ghost' }, 'Start over');
   reset.onclick = () => {
     LS.removeItem('kw_profile');
     onboarding(node);
   };
 
+  const count = connectionsList(loadSocial()).length;
   screen(
     el('h1', {}, `You're set, ${p.firstName}`),
     el('div', { class: 'card' }, el('div', { class: 'muted' }, 'Your interests'), tags),
     el('p', { class: 'muted' }, 'Meet someone by scanning their code in person, or send them an invite link.'),
     connect,
+    dash,
+    ...(count ? [el('p', { class: 'muted' }, `${count} connection${count === 1 ? '' : 's'}`)] : []),
     reset,
   );
+}
+
+// ---- dashboard: connections, tags, groups ---------------------------------
+
+function connectionsScreen(node: Node) {
+  const conns = connectionsList(loadSocial());
+  const list = el('div', {});
+  if (!conns.length) list.append(el('p', { class: 'muted' }, 'No connections yet. Someone shows up here after you arrange a hangout with them.'));
+  for (const c of conns) {
+    const row = el('div', { class: 'card' });
+    row.style.cursor = 'pointer';
+    const tags = el('div', {});
+    for (const t of c.tags) tags.append(el('span', { class: 'pill' }, t));
+    row.append(el('div', {}, c.name), ...(c.lastHangout ? [el('div', { class: 'muted' }, c.lastHangout)] : []), tags);
+    row.onclick = () => connectionDetail(node, c.id);
+    list.append(row);
+  }
+  const groups = el('button', { class: 'ghost' }, '📁 Groups');
+  groups.onclick = () => groupsScreen(node);
+  screen(el('h1', {}, 'Your connections'), list, groups, backBtn(() => home(node)));
+}
+
+function connectionDetail(node: Node, id: string) {
+  const c0 = loadSocial().connections[id];
+  if (!c0) return connectionsScreen(node);
+
+  const name = el('input', { value: c0.name }) as HTMLInputElement;
+  name.onchange = () => {
+    const s = loadSocial();
+    renameConnection(s, id, name.value);
+    saveSocial(s);
+  };
+
+  const tagsWrap = el('div', {});
+  const renderTags = () => {
+    tagsWrap.innerHTML = '';
+    for (const t of loadSocial().connections[id]?.tags ?? []) {
+      const pill = el('span', { class: 'pill' }, `${t} ✕`);
+      pill.style.cursor = 'pointer';
+      pill.onclick = () => {
+        const s = loadSocial();
+        removeTag(s, id, t);
+        saveSocial(s);
+        renderTags();
+      };
+      tagsWrap.append(pill);
+    }
+  };
+  renderTags();
+  const tagInput = el('input', { placeholder: 'add a tag (e.g. climbing) + Enter' }) as HTMLInputElement;
+  tagInput.onkeydown = (e) => {
+    if ((e as KeyboardEvent).key === 'Enter' && tagInput.value.trim()) {
+      const s = loadSocial();
+      addTag(s, id, tagInput.value);
+      saveSocial(s);
+      tagInput.value = '';
+      renderTags();
+    }
+  };
+
+  const groupsWrap = el('div', {});
+  const s0 = loadSocial();
+  if (!s0.groups.length) groupsWrap.append(el('p', { class: 'muted' }, 'No groups yet — make one in Groups.'));
+  for (const g of s0.groups) {
+    const label = el('label', { style: 'display:flex;align-items:center;gap:8px;margin:4px 0' });
+    const cb = el('input', { type: 'checkbox' }) as HTMLInputElement;
+    cb.checked = g.members.includes(id);
+    cb.onchange = () => {
+      const s = loadSocial();
+      setInGroup(s, g.id, id, cb.checked);
+      saveSocial(s);
+    };
+    label.append(cb, ` ${g.name}`);
+    groupsWrap.append(label);
+  }
+
+  const del = el('button', { class: 'danger' }, 'Delete connection');
+  del.onclick = () => {
+    const s = loadSocial();
+    deleteConnection(s, id);
+    saveSocial(s);
+    connectionsScreen(node);
+  };
+
+  screen(
+    el('h1', {}, 'Connection'),
+    el('div', { class: 'muted' }, 'Name'),
+    name,
+    el('h2', {}, 'Tags'),
+    tagsWrap,
+    tagInput,
+    el('h2', {}, 'Groups'),
+    groupsWrap,
+    del,
+    backBtn(() => connectionsScreen(node)),
+  );
+}
+
+function groupsScreen(node: Node) {
+  const s = loadSocial();
+  const list = el('div', {});
+  if (!s.groups.length) list.append(el('p', { class: 'muted' }, 'No groups yet.'));
+  for (const g of s.groups) {
+    const row = el('div', { class: 'card' });
+    const members = g.members.map((m) => s.connections[m]?.name ?? '?').join(', ');
+    row.append(el('div', {}, `${g.name} (${g.members.length})`), el('div', { class: 'muted' }, members || 'no members yet'));
+    const rm = el('button', { class: 'ghost' }, 'Delete group');
+    rm.onclick = () => {
+      const st = loadSocial();
+      deleteGroup(st, g.id);
+      saveSocial(st);
+      groupsScreen(node);
+    };
+    row.append(rm);
+    list.append(row);
+  }
+  const newName = el('input', { placeholder: 'New group name (e.g. Climbing crew)' }) as HTMLInputElement;
+  const add = el('button', {}, 'Create group');
+  add.onclick = () => {
+    if (!newName.value.trim()) return;
+    const st = loadSocial();
+    createGroup(st, newName.value, rid());
+    saveSocial(st);
+    groupsScreen(node);
+  };
+  screen(el('h1', {}, 'Groups'), list, el('h2', {}, 'New group'), newName, add, backBtn(() => connectionsScreen(node)));
 }
 
 // ---- connect (show QR; wait as responder) ---------------------------------
@@ -376,14 +510,28 @@ interface RunOpts {
 async function runSession(node: Node, profile: PrivateProfile, opts: RunOpts) {
   let session: Session | null = null;
   let conn: RelayConn;
+  let cpName = '';
+  let cpFp = opts.counterpartFp ?? '';
 
-  const build = (peer: { pubKey: string; encPubKey: string }, cpFp: string) => {
-    const persona = new Persona(profile, cpFp, approveAll, new Clock(), {});
-    const driver = new NegotiationDriver(persona, cpFp, opts.role);
+  const build = (peer: { pubKey: string; encPubKey: string }, fp: string) => {
+    cpFp = fp;
+    const persona = new Persona(profile, fp, approveAll, new Clock(), {});
+    const driver = new NegotiationDriver(persona, fp, opts.role);
     return new Session(node, driver, peer, {
       send: (env) => conn.send(env),
       onGateRequest: (req) => renderGate(node, req, (d) => session!.resolveGate(d)),
-      onTerminal: (t) => renderTerminal(node, t),
+      onMessage: (m) => {
+        const fn = (m.payload as Record<string, unknown>).firstName;
+        if (m.type === 'DISCLOSE' && typeof fn === 'string') cpName = fn;
+      },
+      onTerminal: (t) => {
+        if (t.outcome === 'committed' && cpFp) {
+          const s = loadSocial();
+          upsertConnection(s, { id: cpFp, name: cpName, when: Date.now(), hangout: t.artifact ? hangoutSummary(t.artifact) : undefined });
+          saveSocial(s);
+        }
+        renderTerminal(node, t);
+      },
     });
   };
 
@@ -442,6 +590,11 @@ function renderHangout(node: Node, art: ProposedHangout, resolve: (d: { approve:
   const no = el('button', { class: 'ghost' }, 'Pass');
   no.onclick = () => resolve({ approve: false });
   screen(el('h1', {}, 'Proposed hangout'), card, yes, no);
+}
+
+function hangoutSummary(art: ProposedHangout): string {
+  const p = art.plan;
+  return [p.activity.specific || p.activity.class, p.place.name ?? p.place.type, `${p.time?.date ?? ''} ${p.time?.start ?? ''}`.trim()].filter(Boolean).join(' · ');
 }
 
 function renderTerminal(node: Node, t: DriverTerminal) {
