@@ -6,7 +6,8 @@
  */
 
 import qrcode from 'qrcode-generator';
-import { Node, verifySig, beaconBody, fingerprint, type PresenceBeacon } from '../src/portable/crypto';
+import { Node, fingerprint, type PresenceBeacon } from '../src/portable/crypto';
+import { makeInvite, inviteUrl, parseKw1FromHash, decodeKw1, encodeKw1, verifyInvite } from '../src/portable/invite';
 import { connectRelay, type RelayConn } from '../src/portable/relay-connect';
 import { Session } from '../src/portable/session';
 import { NegotiationDriver } from '../src/core/negotiation-driver';
@@ -238,8 +239,8 @@ function secretsForm(node: Node, draft: ProfileDraft | null) {
     const pending = sessionStorage.getItem('kw_pair');
     if (pending) {
       sessionStorage.removeItem('kw_pair');
-      const beacon = decodeBeacon(pending);
-      if (beacon) return startConnect(node, loadProfile()!, beacon);
+      const kw = decodeKw1(pending);
+      if (kw && kw.kind === 'invite' && verifyInvite(kw)) return startConnect(node, loadProfile()!, kw.beacon);
     }
     home(node);
   };
@@ -414,9 +415,8 @@ function groupsScreen(node: Node) {
 // ---- connect (show QR; wait as responder) ---------------------------------
 
 async function connectScreen(node: Node, profile: PrivateProfile) {
-  const beacon = node.beacon('local', profile.hobbyTags, profile.geoCell);
-  const payload = btoa(JSON.stringify({ v: 1, beacon, rt: rid() }));
-  const link = `${location.origin}/#pair=${payload}`;
+  const invite = makeInvite(node, { hobbyTags: profile.hobbyTags, geoCell: profile.geoCell, community: 'local' });
+  const link = inviteUrl(location.origin, invite);
 
   const qr = qrcode(0, 'M');
   qr.addData(link);
@@ -457,14 +457,6 @@ async function connectScreen(node: Node, profile: PrivateProfile) {
 
 // ---- pair (scanner = initiator) -------------------------------------------
 
-function decodeBeacon(payload: string): PresenceBeacon | null {
-  try {
-    const b = (JSON.parse(atob(payload)) as { beacon: PresenceBeacon }).beacon;
-    return verifySig(b.pubKey, beaconBody(b), b.sig) ? b : null;
-  } catch {
-    return null;
-  }
-}
 function startConnect(node: Node, profile: PrivateProfile, beacon: PresenceBeacon) {
   runSession(node, profile, {
     role: 'initiator',
@@ -474,19 +466,18 @@ function startConnect(node: Node, profile: PrivateProfile, beacon: PresenceBeaco
 }
 
 function tryPair(node: Node): boolean {
-  const m = location.hash.match(/#pair=(.+)/);
-  if (!m) return false;
-  const payload = m[1]!;
+  const kw = parseKw1FromHash(location.hash);
+  if (!kw) return false;
   history.replaceState(null, '', location.pathname); // don't re-trigger on refresh
-  const beacon = decodeBeacon(payload);
-  if (!beacon) {
+  if (kw.kind !== 'invite' || !verifyInvite(kw)) {
     screen(el('h1', {}, 'Invalid link'), el('p', { class: 'muted' }, "That connect link couldn't be verified. Ask them to send a fresh one."));
     return true;
   }
+  const beacon = kw.beacon;
   const p = loadProfile();
   if (!p) {
     // Brand-new person: build a Persona first, then auto-connect to the inviter.
-    sessionStorage.setItem('kw_pair', payload);
+    sessionStorage.setItem('kw_pair', encodeKw1(kw));
     onboarding(node);
     return true;
   }

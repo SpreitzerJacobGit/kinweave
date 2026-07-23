@@ -8,6 +8,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LedgerEvent } from '../types/consent';
 import type { PrivateProfile } from '../types/profile';
+import type { Attestation } from '../types/attestation';
 import type { DeviceStore, KeySeeds } from './types';
 
 function readJson<T>(path: string, fallback: T): T {
@@ -23,6 +24,7 @@ export class NodeFsDeviceStore implements DeviceStore {
   private readonly profilePath: string;
   private readonly ledgerPath: string;
   private readonly policyPath: string;
+  private readonly attestationsPath: string;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
@@ -30,6 +32,7 @@ export class NodeFsDeviceStore implements DeviceStore {
     this.profilePath = join(dataDir, 'profile.json');
     this.ledgerPath = join(dataDir, 'ledger.json');
     this.policyPath = join(dataDir, 'policy.json');
+    this.attestationsPath = join(dataDir, 'attestations.json');
   }
 
   keys = {
@@ -71,5 +74,15 @@ export class NodeFsDeviceStore implements DeviceStore {
       p.cooldowns = { ...(p.cooldowns ?? {}), [ownerId]: untilMs };
       writeJson(this.policyPath, p);
     },
+  };
+
+  attestations = {
+    all: async (): Promise<Attestation[]> => readJson<Attestation[]>(this.attestationsPath, []),
+    add: async (a: Attestation) => {
+      const list = readJson<Attestation[]>(this.attestationsPath, []);
+      list.push(a);
+      writeJson(this.attestationsPath, list);
+    },
+    replace: async (list: readonly Attestation[]) => writeJson(this.attestationsPath, list),
   };
 }

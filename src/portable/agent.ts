@@ -7,7 +7,8 @@
  * Pure of MCP/stdio so it can be tested end-to-end in Node (see test/mcp-agent.test.ts).
  */
 
-import { Node, verifySig, beaconBody, fingerprint, type PresenceBeacon } from './crypto';
+import { Node, fingerprint } from './crypto';
+import { makeInvite, encodeKw1, decodeKw1, verifyInvite } from './invite';
 import { connectRelay, type RelayConn } from './relay-connect';
 import { Session } from './session';
 import { NegotiationDriver } from '../core/negotiation-driver';
@@ -86,19 +87,21 @@ export class KinweaveAgent {
   async makeConnectCode(): Promise<string> {
     await this.ensureConn('responder');
     this.connState = 'waiting_for_scan';
-    const beacon = this.node.beacon('local', this.profile.hobbyTags, this.profile.geoCell);
-    return Buffer.from(JSON.stringify({ v: 1, beacon })).toString('base64url');
+    const invite = makeInvite(this.node, {
+      hobbyTags: this.profile.hobbyTags,
+      geoCell: this.profile.geoCell,
+      community: 'local',
+      relays: [this.relayUrl],
+    });
+    return encodeKw1(invite);
   }
 
   /** Connect using a code a friend gave you (starts the negotiation as initiator). */
   async useConnectCode(code: string): Promise<void> {
-    let beacon: PresenceBeacon;
-    try {
-      beacon = (JSON.parse(Buffer.from(code.trim(), 'base64url').toString('utf8')) as { beacon: PresenceBeacon }).beacon;
-    } catch {
-      throw new Error('that code could not be read');
-    }
-    if (!verifySig(beacon.pubKey, beaconBody(beacon), beacon.sig)) throw new Error('that code failed verification');
+    const parsed = decodeKw1(code);
+    if (!parsed || parsed.kind !== 'invite') throw new Error('that code could not be read');
+    if (!verifyInvite(parsed)) throw new Error('that code failed verification');
+    const beacon = parsed.beacon;
     await this.ensureConn('initiator');
     this.session = this.build({ pubKey: beacon.pubKey, encPubKey: beacon.encPubKey }, fingerprint(beacon.pubKey), 'initiator');
     this.connState = 'negotiating';
