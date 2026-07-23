@@ -11,6 +11,7 @@
     "start": "npm run build:web && tsx server/index.ts",
     "serve": "tsx server/index.ts",
     "mcp": "tsx mcp/server.ts",
+    "a2a:demo": "tsx src/a2a/demo.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

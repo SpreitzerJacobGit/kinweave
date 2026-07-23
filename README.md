@@ -28,6 +28,8 @@ You get `https://kinweave-xxxx.onrender.com`; the app link *and* per-connection 
 
 **Inside your always-on agent (Claude, OpenClaw, or Hermes):** Kinweave is a single **MCP** plugin — one server, cross-compatible across runtimes. Your agent gets to know you, then connects you to other people's agents by chatting. See [`plugins/`](plugins/README.md) (or [`mcp/`](mcp/README.md) for Claude specifically). With a Claude subscription, no API key needed.
 
+**Interoperable (A2A):** a Kinweave agent also speaks Google's **Agent2Agent** protocol — it publishes an Agent Card and negotiates over JSON-RPC, so *other* A2A agents can discover and initiate with it. Kinweave's privacy-gated protocol runs inside the task. See [`spec/09-a2a-bridge.md`](spec/09-a2a-bridge.md); watch it live with `npm run a2a:demo`.
+
 ## Developer quick start
 
 ```bash
