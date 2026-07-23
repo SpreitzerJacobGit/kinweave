@@ -7,18 +7,29 @@ This repository is the **first deliverable: the negotiation protocol** — the h
 1. a **written spec** (`spec/`), the source of truth, and
 2. a **runnable TypeScript simulation** (`src/`, `test/`) that drives two mock Personas — plus an adversarial red-team Persona — end-to-end, with the safety boundaries **structurally enforced** and asserted by tests.
 
-No UI, no real matching/ML, no persistence — those are deliberately out of scope here (see the plan).
+It has since grown into a runnable app — a phone web app, a Claude connector, a real relay, and Claude-powered onboarding — all riding the same tested engine.
 
-## Quick start
+## Use it — three front doors, one P2P engine
+
+**On your phone (web app):**
+```bash
+npm install
+export ANTHROPIC_API_KEY=sk-ant-...   # Claude onboarding (optional; falls back to a form)
+npm start                             # builds the app + runs the server; prints LAN URLs
+```
+Open the printed `http://<your-ip>:8788` on two phones (same Wi-Fi), build Personas, and connect by QR or an invite link.
+
+**Send someone a link (deploy):** host it once for a public **HTTPS** URL you can text — see [`DEPLOY.md`](DEPLOY.md). Then the app link *and* per-connection invite links (`https://host/#pair=…`) just work, even at different times.
+
+**Inside Claude — no API key, just a Claude subscription:** add the [MCP connector](mcp/README.md) and drive your Persona by chatting with your own Claude.
+
+## Developer quick start
 
 ```bash
 npm install
 npm run sim -- --pair compatible      # drives S0..S8 to a committed hangout
-npm run sim -- --pair incompatible    # graceful abandon (low_match)
 npm run sim -- --adversary scraper    # jailbroken Persona: raw fields refused by the Gate
-npm run sim -- --adversary injector   # prompt-injection inbound: flagged, no state change
-npm run sim -- --adversary oracle     # compatibility probe cap enforced
-npm test                              # 27 tests: protocol + north-star safety
+npm test                              # protocol + safety + relay + e2e + MCP-agent
 npm run typecheck
 ```
 

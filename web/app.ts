@@ -156,6 +156,13 @@ function secretsForm(node: Node, draft: ProfileDraft | null) {
       contact: contact.value || 'ask in person',
     };
     saveProfile(assembleProfile(base, secrets));
+    // If they arrived from an invite link, connect to the inviter now.
+    const pending = sessionStorage.getItem('kw_pair');
+    if (pending) {
+      sessionStorage.removeItem('kw_pair');
+      const beacon = decodeBeacon(pending);
+      if (beacon) return startConnect(node, loadProfile()!, beacon);
+    }
     home(node);
   };
 
@@ -178,7 +185,7 @@ function home(node: Node) {
   const tags = el('div', {});
   for (const t of p.hobbyTags) tags.append(el('span', { class: 'pill' }, t));
 
-  const connect = el('button', {}, '📷 Connect in person');
+  const connect = el('button', {}, '🔗 Connect / invite someone');
   connect.onclick = () => connectScreen(node, p);
   const reset = el('button', { class: 'ghost' }, 'Start over');
   reset.onclick = () => {
@@ -189,7 +196,7 @@ function home(node: Node) {
   screen(
     el('h1', {}, `You're set, ${p.firstName}`),
     el('div', { class: 'card' }, el('div', { class: 'muted' }, 'Your interests'), tags),
-    el('p', { class: 'muted' }, 'To meet someone, be in the same place: one of you shows the code, the other scans it with their camera.'),
+    el('p', { class: 'muted' }, 'Meet someone by scanning their code in person, or send them an invite link.'),
     connect,
     reset,
   );
@@ -208,55 +215,77 @@ async function connectScreen(node: Node, profile: PrivateProfile) {
   const qrBox = el('div', { class: 'qr' });
   qrBox.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 1 });
 
-  const status = el('p', { class: 'muted' }, 'Waiting for someone to scan…');
-  const copy = el('button', { class: 'ghost' }, 'Copy link instead');
-  copy.onclick = () => navigator.clipboard?.writeText(link);
+  const status = el('p', { class: 'muted' }, 'Waiting for them to open the link…');
+  const share = el('button', {}, '📨 Send invite link');
+  share.onclick = async () => {
+    try {
+      await (navigator as unknown as { share: (d: { title: string; text: string; url: string }) => Promise<void> }).share({ title: 'Kinweave', text: 'Connect with me on Kinweave', url: link });
+    } catch {
+      try {
+        await navigator.clipboard?.writeText(link);
+        status.textContent = 'Link copied — paste it to your friend.';
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+  const back = el('button', { class: 'ghost' }, 'Back');
+  back.onclick = () => home(node);
 
   screen(
-    el('h1', {}, 'Show this to connect'),
+    el('h1', {}, 'Invite someone'),
+    el('p', { class: 'muted' }, 'In person, they scan this. Far away, send the link — it works even if you open it at different times.'),
     el('div', { style: 'text-align:center' }, qrBox),
-    status,
+    share,
     el('div', { class: 'link' }, link),
-    copy,
+    status,
+    back,
   );
 
   // Listen as responder: build the session on the first inbound envelope.
-  runSession(node, profile, { role: 'responder', onFirst: () => (status.textContent = 'Connected — negotiating…') });
+  runSession(node, profile, { role: 'responder', onFirst: () => (status.textContent = 'Connected — your Personas are talking…') });
 }
 
 // ---- pair (scanner = initiator) -------------------------------------------
 
+function decodeBeacon(payload: string): PresenceBeacon | null {
+  try {
+    const b = (JSON.parse(atob(payload)) as { beacon: PresenceBeacon }).beacon;
+    return verifySig(b.pubKey, beaconBody(b), b.sig) ? b : null;
+  } catch {
+    return null;
+  }
+}
+function startConnect(node: Node, profile: PrivateProfile, beacon: PresenceBeacon) {
+  runSession(node, profile, {
+    role: 'initiator',
+    peer: { pubKey: beacon.pubKey, encPubKey: beacon.encPubKey },
+    counterpartFp: fingerprint(beacon.pubKey),
+  });
+}
+
 function tryPair(node: Node): boolean {
   const m = location.hash.match(/#pair=(.+)/);
   if (!m) return false;
+  const payload = m[1]!;
   history.replaceState(null, '', location.pathname); // don't re-trigger on refresh
-  let parsed: { beacon: PresenceBeacon };
-  try {
-    parsed = JSON.parse(atob(m[1]!));
-  } catch {
-    return false;
-  }
-  const beacon = parsed.beacon;
-  if (!verifySig(beacon.pubKey, beaconBody(beacon), beacon.sig)) {
-    screen(el('h1', {}, 'Invalid code'), el('p', { class: 'muted' }, "That link couldn't be verified. Ask them to show it again."));
+  const beacon = decodeBeacon(payload);
+  if (!beacon) {
+    screen(el('h1', {}, 'Invalid link'), el('p', { class: 'muted' }, "That connect link couldn't be verified. Ask them to send a fresh one."));
     return true;
   }
   const p = loadProfile();
-  const start = el('button', {}, 'Connect');
-  start.onclick = () =>
-    runSession(node, p!, {
-      role: 'initiator',
-      peer: { pubKey: beacon.pubKey, encPubKey: beacon.encPubKey },
-      counterpartFp: fingerprint(beacon.pubKey),
-    });
-  const cancel = el('button', { class: 'ghost' }, 'Not now');
-  cancel.onclick = () => home(node);
-
   if (!p) {
-    screen(el('h1', {}, 'Build your Persona first'), el('p', { class: 'muted' }, 'You need a Persona before connecting.'), el('button', {}, 'Get started')).lastChild?.addEventListener('click', () => onboarding(node));
+    // Brand-new person: build a Persona first, then auto-connect to the inviter.
+    sessionStorage.setItem('kw_pair', payload);
+    onboarding(node);
     return true;
   }
-  screen(el('h1', {}, 'Connect with someone nearby?'), el('p', { class: 'muted' }, 'Their hobbies: ' + beacon.hobbyTags.join(', ')), start, cancel);
+  const start = el('button', {}, 'Connect');
+  start.onclick = () => startConnect(node, p, beacon);
+  const cancel = el('button', { class: 'ghost' }, 'Not now');
+  cancel.onclick = () => home(node);
+  screen(el('h1', {}, 'Connect with them?'), el('p', { class: 'muted' }, 'Their interests: ' + beacon.hobbyTags.join(', ')), start, cancel);
   return true;
 }
 

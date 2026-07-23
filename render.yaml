@@ -1,0 +1,13 @@
+# One-click-ish deploy to Render (free tier). In Render: New > Blueprint,
+# point at this repo, it reads this file. Set ANTHROPIC_API_KEY in the dashboard
+# (for the Claude onboarding chat). Render provides HTTPS + a public URL.
+services:
+  - type: web
+    name: kinweave
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build:web
+    startCommand: npx tsx server/index.ts
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
