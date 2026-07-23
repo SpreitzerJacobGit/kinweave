@@ -8,12 +8,12 @@ This spec covers the **negotiation protocol**: how two Personas representing two
 
 - **Zone O — Owner boundary (private).** Raw preferences, values, exact location, contact identity, Persona memory. **Never leaves in raw form.**
 - **Zone P — Persona runtime (semi-trusted).** The owner's own agent. Emits outbound data *only* through the Disclosure Gate; treats all inbound counterpart content as untrusted.
-- **Zone B — Broker (honest-but-curious).** Routes messages, computes coarse compatibility on non-invertible representations, rate-limits. Holds no raw preferences.
-- **Zone X — Counterpart (untrusted).** A stranger's Persona + human. Everything from X is hostile-until-proven.
+- **Zone T — Transport (untrusted infrastructure).** Dumb message-passing — direct connections, local broadcast, a DHT, or optional relays. Carries only signed, end-to-end-encrypted envelopes; sees no plaintext, computes nothing, is interchangeable and self-hostable, trusted with **nothing**. (Kinweave is completely peer-to-peer — there is no broker. See `spec/08`.)
+- **Zone X — Counterpart node (untrusted).** A stranger's Persona + human. Everything from X is hostile-until-proven.
 
 ## Two control planes
 
-- **Disclosure Gate** (`src/core/disclosure-gate.ts`) — the single outbound chokepoint. No code path reaches Zone B/X except through it.
+- **Disclosure Gate** (`src/core/disclosure-gate.ts`) — the single outbound chokepoint. No code path reaches Zone T/X except through it.
 - **Consent Ledger** (`src/core/consent-ledger.ts`) — append-only source of truth for "was the owner actually in the loop".
 
 ## Design invariants (constrain everything downstream)
@@ -24,6 +24,7 @@ This spec covers the **negotiation protocol**: how two Personas representing two
 - **P3 — Owner-in-the-loop by default.** The Persona proposes; the owner approves. Mode-configurable.
 - **P4 — Everything is observable.** Both owners can inspect the full transcript and their own audit ledger.
 - **P5 — Bounded everything.** Per-stage caps, a global message budget, and gate TTLs. Exhaustion = graceful abandon, not error.
+- **P6 — No trusted third party.** Completely peer-to-peer: the only shared state is between the two peers; all infrastructure is untrusted and interchangeable; all policy (blocks, cooldowns, audit) is enforced locally by each node. See `spec/08`.
 
 ## Prior art
 

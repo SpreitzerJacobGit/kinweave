@@ -1,10 +1,12 @@
 /**
  * Coarse, non-invertible, oracle-resistant compatibility signals.
  *
- * The Broker (Zone B) computes compatibility over QUANTIZED representations so
- * neither Persona learns the other's raw preferences, and returns coarse BANDS
- * (not precise scores), rate-limited and noised, so the check can't be abused as
- * a query oracle. See spec/06-threat-model-and-safety.md §Coarse signals.
+ * Kinweave is peer-to-peer: EACH PEER computes compatibility LOCALLY over the
+ * QUANTIZED representation its counterpart sends (or the two peers run a
+ * two-party private set intersection directly). No third party ever computes or
+ * sees anything. The check returns coarse BANDS (not precise scores), and is
+ * rate-limited/noised so it can't be abused as a query oracle. See spec/08 and
+ * spec/06-threat-model-and-safety.md §Coarse signals.
  */
 
 export type MatchBand = 'low' | 'medium' | 'high';

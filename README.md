@@ -1,6 +1,6 @@
 # Kinweave
 
-A social network made of **personal AI Personas** that know their owner and negotiate, on their owner's behalf, with other people's Personas to arrange local, real-world hangouts — inside a **local + hobby community**, with the **human owner in the loop** at every consequential step.
+A **completely peer-to-peer** social network made of **personal AI Personas** that know their owner and negotiate, on their owner's behalf, with other people's Personas to arrange local, real-world hangouts — inside a **local + hobby community**, with the **human owner in the loop** at every consequential step. No central server, no matchmaking company in the middle: each Persona is a node you control (see [`spec/08-p2p-architecture.md`](spec/08-p2p-architecture.md)).
 
 This repository is the **first deliverable: the negotiation protocol** — the hardest and most valuable piece, because it is where two agents representing two *different, stranger* owners exchange intimate preferences across a trust boundary. It ships as:
 
@@ -24,7 +24,7 @@ npm run typecheck
 
 ## How it works (one screen)
 
-Four trust zones: **O** owner boundary (private, raw preferences never leave), **P** the owner's own Persona runtime, **B** the honest-but-curious broker, **X** the untrusted counterpart. Two control planes everything hangs off:
+Kinweave is **completely peer-to-peer** — no central server, no broker, no trusted third party (`spec/08`). Four trust zones: **O** owner boundary (private, raw preferences never leave), **P** the owner's own Persona node, **T** untrusted transport (dumb relays / DHT / local broadcast that only ever carry signed, end-to-end-encrypted envelopes), **X** the untrusted counterpart node. Two control planes everything hangs off:
 
 - **Disclosure Gate** (`src/core/disclosure-gate.ts`) — the single outbound chokepoint. Every field passing to the wire is classified to a tier and checked against the current consented tier and the hard-boundary set, **on output**, independent of what the Persona model "decided". A jailbroken Persona cannot exceed its tier.
 - **Consent Ledger** (`src/core/consent-ledger.ts`) — append-only record of every consent grant and disclosure. The proof that the owner was in the loop. Cannot be disabled.
@@ -48,5 +48,22 @@ src/
   sim/      fixtures, adversary, CLI runner
 test/   protocol coverage + north-star safety assertions
 ```
+
+## Roadmap
+
+This is v0.1 — the protocol as spec + runnable simulation. Next, toward a fully peer-to-peer reference node:
+
+- `src/core/identity.ts` — Ed25519 keypairs; sign/verify every message (identity = a public key, no accounts).
+- `src/core/transport.ts` — an untrusted relay abstraction that only passes signed, encrypted envelopes and cannot read them.
+- `src/core/discovery.ts` — decentralized local presence beacons + DHT-style announce (no central matchmaker).
+- Then: web-of-trust vouching (anti-Sybil without a registry), and a real network transport (libp2p / WebRTC / Nostr relays).
+
+Contributions welcome — the protocol spec in `spec/` is the source of truth; implementations in any language should conform to it.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). (An open protocol meant to be implemented freely by anyone. If a patent grant is preferred for wider standardization, Apache-2.0 is a one-file swap.)
+
+---
 
 Codename note: this project was briefly scaffolded as "Kith"; it is now **Kinweave**.

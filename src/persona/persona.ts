@@ -89,7 +89,7 @@ export class Persona {
     };
   }
 
-  /** Coarse, non-invertible signal for the broker. The raw vector never leaves. */
+  /** Coarse, non-invertible signal a counterpart peer matches on locally. The raw vector never leaves. */
   coarseSignal() {
     return {
       quant: quantize(this.profile.interestVector),

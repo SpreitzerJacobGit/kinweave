@@ -9,7 +9,7 @@ S0 DISCOVERY → S1 HANDSHAKE → S2 MATCH_PROBE → S3 INTENT_ALIGN
 
 | Stage | What happens | Owner gate | Cap | Failure → |
 |-------|--------------|-----------|-----|-----------|
-| **S0 Discovery** | Broker surfaces candidates on coarse T0/T1 signals. Autonomous. | — | — | `low_match` (different community) |
+| **S0 Discovery** | Peers find each other via decentralized local presence beacons / DHT (no central matchmaker); coarse T0/T1 signals only. Autonomous. | — | — | `low_match` (different community) |
 | **S1 Handshake** | Exchange `HELLO`/`HELLO_ACK`; open channel. | **G1** connection | 1 | `declined` / `timeout` |
 | **S2 Match-probe** | Exchange coarse `SIGNAL` (quantized); each computes a local match band. | — | probe 2 | `low_match` |
 | **S3 Intent-align** | Abstract `INTENT_FRAME`; agree the archetype (activity class, energy, time band). | **G2** disclosure consent | align 3 | `archetype_mismatch` |

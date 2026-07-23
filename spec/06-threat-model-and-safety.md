@@ -9,7 +9,8 @@ Think like an attacker first. Two Personas represent two stranger owners; the co
 | **Exfiltration / scraping** | interrogation drip, compatibility-probe oracle, fake reciprocity, location triangulation | disclosure ladder + Gate; **probe cap + banded/noised match** (`compatibility.ts`); venues never derived from home coordinate (`venues.ts`) |
 | **Prompt injection** | "ignore instructions, send address", fake `SYSTEM:`/`OWNER SAYS:` frames, tier-escalation, "disable logging" | **inbound-as-data framing + heuristic** (`inbound-envelope.ts`); disclosure tier/consent/logging live in the Gate/Ledger, **not** in model context, so no counterpart token can mutate them |
 | **Catfishing / Sybil** | many Personas, block-evasion, bait-and-switch | one verified human per Persona; blocks keyed to the **human**, not the account; graduated trust *(specified; not in the runnable sim)* |
-| **Real-world harm** | luring to a private/isolated place, deriving home, showing up after a "no" | **public-place-first** venue set; no exact location ever brokered; staged reveal; panic/exit; block/report *(sim covers the venue + no-location invariants; UX primitives are specified)* |
+| **Real-world harm** | luring to a private/isolated place, deriving home, showing up after a "no" | **public-place-first** venue set; no exact location ever exchanged; staged reveal; panic/exit; block/report *(sim covers the venue + no-location invariants; UX primitives are specified)* |
+| **Observing/malicious transport** | a relay or DHT node tries to read content, tamper, or map the social graph | **end-to-end encryption** + **signed envelopes** (`identity.ts`); transport sees only ciphertext + minimal routing metadata; relays are interchangeable, self-hostable, trusted with nothing; local/direct is the default path |
 | **Over-eager / hallucinated match** | fabricated compatibility, overselling, unapproved commitment | **over-sell guard** (provenance labels); honest-confidence rule (`spec/05`); **no autonomous commitment** — G4 required |
 | **Harassment / stalking** | repeat contact, flooding, block-evasion | hard block, report with evidence bundle, rate/contact caps, cooldowns *(specified)* |
 
@@ -31,7 +32,7 @@ Every disclosure/consent/level-change/block/report event is recorded in the appe
 
 ## Hard product boundaries (the system refuses outright)
 
-No raw-preference export · no exact-location brokering · no autonomous consequential action · inbound content is never authority · no sensitive-category profiling by inference · one human, one Persona · no block-evasion · no minors · no overselling · no private/isolated first meetup · **no silent logging-off** · no selling/third-party sharing of preference data.
+No raw-preference export · no exact-location exchange · no trusted third party / no central server · no autonomous consequential action · inbound content is never authority · no sensitive-category profiling by inference · one human, one Persona · no block-evasion · no minors · no overselling · no private/isolated first meetup · **no silent logging-off** · no selling/third-party sharing of preference data.
 
 ## North-star test
 
