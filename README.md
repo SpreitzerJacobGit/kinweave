@@ -19,7 +19,11 @@ npm start                             # builds the app + runs the server; prints
 ```
 Open the printed `http://<your-ip>:8788` on two phones (same Wi-Fi), build Personas, and connect by QR or an invite link.
 
-**Send someone a link (deploy):** host it once for a public **HTTPS** URL you can text — see [`DEPLOY.md`](DEPLOY.md). Then the app link *and* per-connection invite links (`https://host/#pair=…`) just work, even at different times.
+**Send someone a link (deploy):** host it once for a public **HTTPS** URL you can text. One click (then add `ANTHROPIC_API_KEY` in the dashboard):
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/SpreitzerJacobGit/kinweave)
+
+You get `https://kinweave-xxxx.onrender.com`; the app link *and* per-connection invite links (`https://host/#pair=…`) just work, even at different times. Details + other hosts: [`DEPLOY.md`](DEPLOY.md).
 
 **Inside Claude — no API key, just a Claude subscription:** add the [MCP connector](mcp/README.md) and drive your Persona by chatting with your own Claude.
 

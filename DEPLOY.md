@@ -12,11 +12,16 @@ new users' onboarding — the relay stays peer-to-peer and never sees plaintext.
 
 ## Render (easiest, free)
 
-1. Push this repo to GitHub (already at github.com/SpreitzerJacobGit/kinweave).
-2. Render → **New → Blueprint** → pick the repo. It reads `render.yaml`.
-   (Or **New → Web Service**, build `npm ci && npm run build:web`, start `npx tsx server/index.ts`.)
-3. Add env var `ANTHROPIC_API_KEY`.
-4. Deploy → you get `https://kinweave-xxxx.onrender.com`.
+One click — this reads `render.yaml`:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/SpreitzerJacobGit/kinweave)
+
+1. Click the button (sign in to Render, approve the repo).
+2. When prompted, set env var **`ANTHROPIC_API_KEY`** (marked "sync: false" so Render asks).
+3. **Apply** → you get `https://kinweave-xxxx.onrender.com`.
+
+Manual alternative: Render → **New → Blueprint** → pick the repo; or **New → Web
+Service** with build `npm ci && npm run build:web` and start `npx tsx server/index.ts`.
 
 ## Fly.io
 
