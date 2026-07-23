@@ -121,11 +121,22 @@ changing callers.
 
 ## 7. Implementation status
 
-- **This PR (Milestones 0–1):** `kw1` invite atom (`src/portable/invite.ts`),
-  community identity/descriptor (`src/portable/community.ts`), attestation model
+- **Milestones 0–1:** `kw1` invite atom (`src/portable/invite.ts`), community
+  identity/descriptor (`src/portable/community.ts`), attestation model
   (`src/portable/attestation.ts`, `src/types/attestation.ts`), and the trust-policy
   evaluator with the `unique-human` slot (`src/portable/trust-policy.ts`). No
   behavior change to existing flows.
-- **Next:** the public community board + networked discovery (Milestone 2), then
-  co-presence + vouch + the enforcement seam (Milestone 3), surfaces (4), and the
-  blinded PoP issuer (5).
+- **Milestone 2 (this PR):** the public community board
+  (`src/net/community-board.ts`) delegated to by BOTH relays (`server/index.ts`,
+  `src/net/relay-server.ts`); community wire messages (`post_beacon`,
+  `sub_community`, `unsub_community` → `community_beacons`, `post_ok`,
+  `post_rejected`) multiplexed over the existing relay socket
+  (`src/portable/relay-connect.ts`); networked discovery with a re-verified local
+  mirror (`src/portable/community-connect.ts`). End-to-end: N nodes scan one
+  community QR → join the board → discover each other → a discovered beacon feeds
+  the existing gated pairwise negotiation to a committed hangout. The board holds
+  only signed T0 beacons; the enforcement (trust-policy) hook defaults to
+  allow-all here.
+- **Next:** co-presence + vouch + the enforcement seam wired into
+  `checkCommunity` before G1 (Milestone 3), PWA/MCP surfaces (4), and the blinded
+  PoP issuer (5).

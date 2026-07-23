@@ -18,6 +18,7 @@ import { networkInterfaces } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { fingerprint, signedBody, verifySig, type WireEnvelope } from '../src/portable/crypto';
 import type { ClientMsg, ServerMsg } from '../src/portable/wire-protocol';
+import { CommunityBoardStore, handleCommunityMsg } from '../src/net/community-board';
 import { makeLLM, type ProviderConfig } from '../src/ai/providers';
 import { runOnboardingTurn, extractDraft } from '../src/ai/onboarding';
 
@@ -43,6 +44,7 @@ interface Stored {
 function attachRelay(wss: WebSocketServer): void {
   const mail = new Map<string, Stored[]>();
   const subs = new Map<string, WebSocket>();
+  const board = new CommunityBoardStore();
   let counter = 0;
 
   wss.on('connection', (ws) => {
@@ -82,10 +84,13 @@ function attachRelay(wss: WebSocketServer): void {
       } else if (m.t === 'ack') {
         if (!authed) return;
         mail.set(authed, (mail.get(authed) ?? []).filter((s) => !m.mailIds.includes(s.mailId)));
+      } else if (m.t === 'post_beacon' || m.t === 'sub_community' || m.t === 'unsub_community') {
+        handleCommunityMsg(board, ws, m, (msg) => ws.send(JSON.stringify(msg)));
       }
     });
     ws.on('close', () => {
       if (authed && subs.get(authed) === ws) subs.delete(authed);
+      board.removeSocket(ws);
     });
   });
 }
