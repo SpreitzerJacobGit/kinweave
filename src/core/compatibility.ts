@@ -48,6 +48,23 @@ export function tagOverlap(a: readonly string[], b: readonly string[]): string[]
 }
 
 /**
+ * Derive a coarse interest vector from tags, ON DEVICE, with no LLM and no
+ * network — a deterministic hash spread across `dim` buckets, normalized to
+ * [0,1]. This keeps the raw vector's provenance local (Zone O); only its
+ * quantized derivative ever leaves via the Disclosure Gate.
+ */
+export function deriveInterestVector(tags: readonly string[], dim = 5): number[] {
+  const v = new Array<number>(dim).fill(0);
+  for (const tag of tags) {
+    let h = 2166136261;
+    for (let i = 0; i < tag.length; i++) h = ((h ^ tag.charCodeAt(i)) * 16777619) >>> 0;
+    v[h % dim] = (v[h % dim] ?? 0) + 1;
+  }
+  const max = Math.max(1, ...v);
+  return v.map((x) => x / max);
+}
+
+/**
  * Compute a coarse match band from quantized signals + tag overlap.
  * Deterministic quantized noise keeps repeated probes from reconstructing a
  * precise score, without breaking reproducibility.
