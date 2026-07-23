@@ -4,6 +4,7 @@
  *   npm run sim -- --pair compatible
  *   npm run sim -- --pair incompatible
  *   npm run sim -- --adversary scraper|injector|oracle
+ *   npm run sim -- --p2p                 (peer-to-peer: discovery + sealed transport)
  */
 
 import { negotiate } from '../core/state-machine';
@@ -12,6 +13,9 @@ import { INJECTION_MESSAGES, craftInjection } from './adversary';
 import { approveAll } from '../persona/owner';
 import { Clock } from '../core/clock';
 import { frameInbound } from '../core/inbound-envelope';
+import { P2PNode } from '../core/node';
+import { Relay } from '../core/transport';
+import { PresenceBoard } from '../core/discovery';
 
 function arg(name: string, fallback = ''): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -90,8 +94,46 @@ function runAdversary(kind: string) {
   }
 }
 
+function runP2P() {
+  line('\n=== Peer-to-peer: decentralized discovery + sealed transport (no server, no broker) ===');
+  const board = new PresenceBoard(); // models mDNS / local broadcast / DHT — untrusted medium
+  const relay = new Relay(); // untrusted infrastructure — routes, cannot read
+  const alice = new P2PNode();
+  const bob = new P2PNode();
+
+  // 1. Each node publishes a SIGNED, T0-only presence beacon.
+  board.announce(alice.beacon('northside-climbers', ['climbing', 'board-games'], 'northside'));
+  board.announce(bob.beacon('northside-climbers', ['board-games', 'coffee'], 'northside'));
+  line(`  alice ${alice.id}  bob ${bob.id}`);
+
+  // 2. Alice discovers Bob locally (and re-verifies his beacon signature).
+  const peers = board.discover('northside-climbers', 'board-games').filter((b) => b.pubKey !== alice.identity.pubKey);
+  line(`  alice discovered ${peers.length} peer(s) via signed local beacons`);
+  const peer = peers[0]!;
+
+  // 3. Alice seals a first message to Bob and sends it over the untrusted relay.
+  const secret = 'HELLO bob — want to co-plan a board-games meetup?';
+  const env = alice.seal({ pubKey: peer.pubKey, encPubKey: peer.encPubKey }, secret);
+  const res = relay.send(env);
+  line(`  relay accepted (signature valid): ${res.accepted}`);
+
+  // 4. What can the relay see? Only ciphertext + routing metadata.
+  const relaySees = JSON.stringify(relay.observable());
+  line(`  relay can read the message text? ${relaySees.includes('board-games meetup')}`);
+
+  // 5. Only Bob can open it.
+  const inbox = relay.receiveFor(bob.id);
+  line(`  bob opened: "${bob.open(inbox[0]!)}"`);
+
+  // 6. A forged/tampered envelope is rejected by the relay.
+  const forged = { ...env, box: { ...env.box, ct: Buffer.from('evil').toString('base64') } };
+  line(`  tampered envelope accepted? ${relay.send(forged).accepted}`);
+}
+
 const adv = arg('adversary');
-if (adv) {
+if (process.argv.includes('--p2p')) {
+  runP2P();
+} else if (adv) {
   runAdversary(adv);
 } else {
   const pair = arg('pair', 'compatible') as 'compatible' | 'incompatible';

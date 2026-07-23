@@ -51,12 +51,13 @@ test/   protocol coverage + north-star safety assertions
 
 ## Roadmap
 
-This is v0.1 — the protocol as spec + runnable simulation. Next, toward a fully peer-to-peer reference node:
+This is v0.1 — the protocol as spec + runnable simulation, with a working peer-to-peer layer (real crypto, no deps):
 
-- `src/core/identity.ts` — Ed25519 keypairs; sign/verify every message (identity = a public key, no accounts).
-- `src/core/transport.ts` — an untrusted relay abstraction that only passes signed, encrypted envelopes and cannot read them.
-- `src/core/discovery.ts` — decentralized local presence beacons + DHT-style announce (no central matchmaker).
-- Then: web-of-trust vouching (anti-Sybil without a registry), and a real network transport (libp2p / WebRTC / Nostr relays).
+- ✅ `src/core/identity.ts` — Ed25519 keypairs; sign/verify every message (identity = a public key, no accounts).
+- ✅ `src/core/transport.ts` — X25519 + AES-256-GCM sealed boxes and an untrusted `Relay` that routes signed envelopes but cannot read them.
+- ✅ `src/core/discovery.ts` — decentralized, signed local presence beacons (mDNS / broadcast / DHT model), re-verified by every reader.
+- ✅ `src/core/node.ts` + `npm run sim -- --p2p` — end-to-end demo: discover → seal → relay-can't-read → recipient opens → forgery rejected.
+- ⏭ Next: fuse the sealed transport with the negotiation channel (full S0–S8 over the relay, encrypted); web-of-trust vouching (anti-Sybil without a registry); a real network transport (libp2p / WebRTC / Nostr relays).
 
 Contributions welcome — the protocol spec in `spec/` is the source of truth; implementations in any language should conform to it.
 

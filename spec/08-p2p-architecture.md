@@ -46,6 +46,15 @@ Each peer computes the match **locally** on the coarse `SIGNAL` its counterpart 
 
 The S7 two-phase commit produces a **receipt signed by both Personas' keys**, referencing the artifact hash. Each owner keeps their copy. There is no global ledger and no double-spend problem to solve centrally: a hangout is a mutual agreement between two peers, and the idempotent commit (`CommitBook`, keyed on the artifact hash) prevents a peer double-booking itself.
 
-## What this means for the code
+## What this means for the code (implemented)
 
-The runnable sim already computes match locally and holds all state per-peer, so it is P2P-shaped by construction. The P2P layer being added: `identity.ts` (Ed25519 keys, sign/verify), `transport.ts` (an untrusted relay that only passes signed envelopes and cannot read them), and `discovery.ts` (decentralized local/DHT presence). See the README roadmap.
+The runnable sim already computes match locally and holds all state per-peer, so it is P2P-shaped by construction. The peer-to-peer layer is implemented with **real crypto** (Node built-in, zero dependencies) and covered by tests (`test/p2p.test.ts`):
+
+- `src/core/identity.ts` — Ed25519 keypairs; `sign` / `verifySig`. Identity is a public key; a bad or cross-key signature fails.
+- `src/core/transport.ts` — `EncryptionKey` (X25519 key agreement + AES-256-GCM sealed boxes) and `Relay`, an untrusted router that verifies the sender's signature over the ciphertext but **holds no key and cannot decrypt**. Only the recipient can open a box; a third party gets `null`; tampering fails the auth tag / signature.
+- `src/core/discovery.ts` — `PresenceBoard`, the untrusted shared medium (mDNS / local broadcast / DHT). Beacons are signed, T0-only, and re-verified by every reader; a forged beacon is rejected.
+- `src/core/node.ts` — `P2PNode`, the thing an owner runs: bundles identity + encryption, publishes a signed beacon, seals/opens messages over a relay.
+
+Run the end-to-end demo: `npm run sim -- --p2p` (discovery → sealed transport → the relay cannot read it → recipient opens it → a tampered envelope is rejected).
+
+**Still ahead:** fuse the sealed transport with the negotiation `Channel` so full S0–S8 runs traverse the relay encrypted; web-of-trust vouching (anti-Sybil without a registry); a real network transport (libp2p / WebRTC / Nostr relays).
