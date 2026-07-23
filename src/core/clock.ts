@@ -11,3 +11,21 @@ export class Clock {
     return this.t;
   }
 }
+
+/**
+ * Real-time clock for production nodes. `now()` returns Unix ms (used for
+ * wall-clock gate/stage deadlines); `tick()` is a strictly-increasing ms stamp
+ * (ties broken by +1) so the append-only ledger keeps a total order. Tests keep
+ * using the deterministic `Clock`.
+ */
+export class WallClock extends Clock {
+  private last = 0;
+  override tick(): number {
+    const n = Math.max(Date.now(), this.last + 1);
+    this.last = n;
+    return n;
+  }
+  override now(): number {
+    return Date.now();
+  }
+}

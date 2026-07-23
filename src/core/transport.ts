@@ -9,7 +9,7 @@
  * trusted with nothing. See spec/08.
  */
 
-import { createCipheriv, createDecipheriv, createHash, createPublicKey, diffieHellman, generateKeyPairSync, randomBytes, type KeyObject } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, randomBytes, type KeyObject } from 'node:crypto';
 import { verifySig } from './identity';
 
 export interface SealedBox {
@@ -23,10 +23,21 @@ export class EncryptionKey {
   private readonly priv: KeyObject;
   readonly pubKey: string; // base64 SPKI DER
 
-  constructor() {
-    const { privateKey, publicKey } = generateKeyPairSync('x25519');
-    this.priv = privateKey;
+  /** Generate a fresh encryption key, or reconstruct one from a persisted private key. */
+  constructor(priv?: KeyObject) {
+    this.priv = priv ?? generateKeyPairSync('x25519').privateKey;
+    const publicKey = createPublicKey(this.priv);
     this.pubKey = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+  }
+
+  /** Restore from an exported seed (base64 PKCS8 DER private key). */
+  static fromSeed(seedB64: string): EncryptionKey {
+    return new EncryptionKey(createPrivateKey({ key: Buffer.from(seedB64, 'base64'), format: 'der', type: 'pkcs8' }));
+  }
+
+  /** Export the private key (base64 PKCS8 DER) for on-device persistence. Guard it. */
+  exportSeed(): string {
+    return (this.priv.export({ type: 'pkcs8', format: 'der' }) as Buffer).toString('base64');
   }
 
   private sharedKey(peerPubB64: string): Buffer {

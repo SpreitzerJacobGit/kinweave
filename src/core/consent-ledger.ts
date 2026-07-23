@@ -34,6 +34,23 @@ export class ConsentLedger {
     return this.events;
   }
 
+  /** Snapshot the events for on-device persistence / account export. */
+  exportEvents(): LedgerEvent[] {
+    return this.events.map((e) => ({ ...e }));
+  }
+
+  /** Rebuild a ledger from persisted events, preserving append-only continuation. */
+  static fromEvents(ownerId: string, clock: Clock, events: readonly LedgerEvent[]): ConsentLedger {
+    const l = new ConsentLedger(ownerId, clock);
+    l.events = events.map((e) => ({ ...e }));
+    l.seq = events.reduce((m, e) => Math.max(m, e.seq), 0);
+    l.counter = events.reduce((m, e) => {
+      const n = Number(e.id.slice(e.id.lastIndexOf('-') + 1));
+      return Number.isFinite(n) ? Math.max(m, n) : m;
+    }, 0);
+    return l;
+  }
+
   find(pred: (e: LedgerEvent) => boolean): LedgerEvent | undefined {
     return this.events.find(pred);
   }
