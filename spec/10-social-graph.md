@@ -204,7 +204,19 @@ changing callers.
   / `list_open_calls` (scored) / `respond_to_call`, sharing ONE relay socket with
   the negotiation. End-to-end tool path proven in `test/mcp-intent.test.ts`
   (post → discover → respond → committed).
-- **Next:** community create/join surfaces (the intent board currently rides the
-  shared `local`/profile community); wiring the real attestation bundle from the
-  store into the HELLO and the Session subject-bind; the blinded PoP issuer,
-  VOPRF on @noble ristretto.
+- **Milestone 6 (community create/join, this PR):** surfaces to create and join
+  real communities, so the boards key on a minted community id instead of the
+  shared `local` default. A device-side `CommunityBook` (`src/portable/community-book.ts`,
+  pure + serializable) holds joined descriptors (+ the mint secret for ones this
+  device founded) and the active selection, over the existing `mintCommunity` /
+  `verifyCommunity` / `kw1 kind:'community'` primitives. PWA (`web/app.ts`): a
+  "Communities" screen (create / join-by-code / switch / share-QR) and a boot
+  handler for `#kw1=<community>` join links; the intent board + connect invite
+  now key on the active community. MCP (`mcp/server.ts` via `KinweaveAgent.setCommunity`):
+  `create_community` / `join_community` / `communities` / `use_community`.
+  `test/mcp-community.test.ts` proves boards are community-scoped and a different
+  community is isolated; `test/community-book.test.ts` covers the store.
+- **Next:** wiring the real attestation bundle from the store into the HELLO and
+  the Session subject-bind (so a community's `TrustPolicy` actually gates joins in
+  the app, not just the tested seam); the blinded PoP issuer, VOPRF on @noble
+  ristretto.

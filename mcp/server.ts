@@ -23,6 +23,8 @@ import { KinweaveAgent } from '../src/portable/agent';
 import { assembleProfile, validateDraft } from '../src/ai/onboarding';
 import type { PrivateProfile } from '../src/types/profile';
 import { emptyStore, upsertConnection, addTag, createGroup, setInGroup, connectionsList, groupsFor, type SocialStore, type Connection } from '../src/portable/social';
+import { CommunityBook, type CommunityBookState } from '../src/portable/community-book';
+import { encodeKw1, decodeKw1 } from '../src/portable/invite';
 
 const HOME = process.env.KINWEAVE_HOME ?? join(homedir(), '.kinweave');
 const STATE = join(HOME, 'state.json');
@@ -32,6 +34,7 @@ interface Persisted {
   keys?: { idSeed: string; encSeed: string };
   profile?: PrivateProfile;
   social?: SocialStore;
+  communities?: CommunityBookState;
 }
 
 function load(): Persisted {
@@ -43,13 +46,14 @@ function load(): Persisted {
 }
 function save(): void {
   mkdirSync(HOME, { recursive: true });
-  writeFileSync(STATE, JSON.stringify({ keys: node.exportSeeds(), profile: profile ?? undefined, social }, null, 2));
+  writeFileSync(STATE, JSON.stringify({ keys: node.exportSeeds(), profile: profile ?? undefined, social, communities: communities.toJSON() }, null, 2));
 }
 
 const state = load();
 const node = state.keys ? new Node(state.keys) : new Node();
 let profile: PrivateProfile | null = state.profile ?? null;
 const social: SocialStore = state.social ?? emptyStore();
+const communities: CommunityBook = CommunityBook.fromJSON(state.communities ?? {});
 let agent: KinweaveAgent | null = null;
 if (!state.keys) save();
 
@@ -61,6 +65,8 @@ function ensureAgent(): KinweaveAgent {
       save();
     });
   }
+  const active = communities.activeId();
+  if (active) agent.setCommunity(active);
   return agent;
 }
 
@@ -176,6 +182,70 @@ server.tool(
     if (!agent?.decline()) return text('Nothing is waiting for approval.');
     await agent.waitForNext();
     return text(statusText());
+  },
+);
+
+server.tool(
+  'kinweave_create_community',
+  'Create a new community (a neighborhood, club, or friend circle) and make it the active board. Returns a join code to share — anyone who joins shares one open-calls board with you.',
+  { name: z.string().describe('display name, e.g. "Northside Board Gamers"') },
+  async ({ name }) => {
+    const c = communities.create({ name: name.trim(), founder: node.identity.pubKey, relays: [RELAY] });
+    if (agent) agent.setCommunity(c.descriptor.community.id);
+    save();
+    return text(`Created "${c.descriptor.community.name}" (${c.descriptor.community.id}) and made it active.\n\nShare this join code so others can join:\n\n${encodeKw1(c.descriptor)}`);
+  },
+);
+
+server.tool(
+  'kinweave_join_community',
+  'Join a community using a code someone shared. Makes it the active board if you had none. Verifies the code before joining.',
+  { code: z.string() },
+  async ({ code }) => {
+    const kw = decodeKw1(code.trim());
+    if (!kw || kw.kind !== 'community') return text("That doesn't look like a community join code.");
+    const r = communities.join(kw, Date.now());
+    if (!r.ok) return text("That community code couldn't be verified (it may be invalid or expired).");
+    if (agent && communities.activeId() === kw.community.id) agent.setCommunity(kw.community.id);
+    save();
+    return text(`Joined "${kw.community.name}" (${kw.community.id}).${communities.activeId() === kw.community.id ? ' It is now your active board.' : ' Use kinweave_use_community to switch to it.'}`);
+  },
+);
+
+server.tool(
+  'kinweave_communities',
+  'List the communities the user has created or joined, and which one is active (the board their open calls post to and read from).',
+  {},
+  async () => {
+    const active = communities.activeId();
+    const rows = communities.list().map((c) => {
+      const id = c.descriptor.community.id;
+      return `${active === id ? '✓ ' : '• '}${c.descriptor.community.name} — ${c.secret ? 'created by you' : 'joined'} (${id})`;
+    });
+    const localLine = `${active === null ? '✓ ' : '• '}Local (default) — anyone on this server`;
+    return text([localLine, ...rows].join('\n') + '\n\nSwitch with kinweave_use_community.');
+  },
+);
+
+server.tool(
+  'kinweave_use_community',
+  "Switch which community is active (by name or id), or pass 'local' for the shared default. Open calls post to and read from the active community.",
+  { community: z.string().describe('a community name, id, or "local"') },
+  async ({ community }) => {
+    const q = community.trim().toLowerCase();
+    if (q === 'local') {
+      communities.setActive(null);
+      if (agent && profile) agent.setCommunity(profile.community);
+      save();
+      return text('Switched to the Local (default) board.');
+    }
+    const match = communities.list().find((c) => c.descriptor.community.id === community.trim() || c.descriptor.community.name.toLowerCase() === q);
+    if (!match) return text(`No community matching "${community}". List them with kinweave_communities.`);
+    const id = match.descriptor.community.id;
+    communities.setActive(id);
+    if (agent) agent.setCommunity(id);
+    save();
+    return text(`Switched to "${match.descriptor.community.name}". Your open calls now use this board.`);
   },
 );
 
