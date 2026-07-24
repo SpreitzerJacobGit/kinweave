@@ -6,9 +6,13 @@
  */
 
 import qrcode from 'qrcode-generator';
-import { Node, fingerprint, type PresenceBeacon } from '../src/portable/crypto';
+import { Node, fingerprint, type PresenceBeacon, type OpenCall } from '../src/portable/crypto';
 import { makeInvite, inviteUrl, parseKw1FromHash, decodeKw1, encodeKw1, verifyInvite } from '../src/portable/invite';
 import { connectRelay, type RelayConn } from '../src/portable/relay-connect';
+import { IntentBoardMembership } from '../src/portable/intent-connect';
+import { matchCall, type CallMatch } from '../src/core/call-match';
+import { CommunityBook } from '../src/portable/community-book';
+import { verifyCommunity, type CommunityDescriptorV1 } from '../src/portable/community';
 import { Session } from '../src/portable/session';
 import { NegotiationDriver } from '../src/core/negotiation-driver';
 import { Persona } from '../src/persona/persona';
@@ -43,6 +47,11 @@ const aiLabel = () => {
 };
 const loadSocial = (): SocialStore => JSON.parse(LS.getItem('kw_social') ?? 'null') ?? emptyStore();
 const saveSocial = (s: SocialStore) => LS.setItem('kw_social', JSON.stringify(s));
+const loadCommunities = (): CommunityBook => CommunityBook.fromJSON(JSON.parse(LS.getItem('kw_communities') ?? '{}'));
+const saveCommunities = (b: CommunityBook) => LS.setItem('kw_communities', JSON.stringify(b.toJSON()));
+/** The community the boards key on: the active one, else the shared in-person 'local'. */
+const activeCommunityId = (): string => loadCommunities().activeId() ?? 'local';
+const activeCommunityName = (): string => loadCommunities().active()?.descriptor.community.name ?? 'Local (default)';
 
 // ---- tiny DOM helpers -----------------------------------------------------
 
@@ -296,6 +305,10 @@ function home(node: Node) {
 
   const connect = el('button', {}, '🔗 Connect / invite someone');
   connect.onclick = () => connectScreen(node, p);
+  const board = el('button', {}, '📣 Open calls');
+  board.onclick = () => intentBoardScreen(node, p);
+  const communities = el('button', { class: 'ghost' }, `🏘️ Communities · ${activeCommunityName()}`);
+  communities.onclick = () => communitiesScreen(node, p);
   const dash = el('button', { class: 'ghost' }, '👥 Connections');
   dash.onclick = () => connectionsScreen(node);
   const reset = el('button', { class: 'ghost' }, 'Start over');
@@ -310,9 +323,309 @@ function home(node: Node) {
     el('div', { class: 'card' }, el('div', { class: 'muted' }, 'Your interests'), tags),
     el('p', { class: 'muted' }, 'Meet someone by scanning their code in person, or send them an invite link.'),
     connect,
+    board,
+    communities,
     dash,
     ...(count ? [el('p', { class: 'muted' }, `${count} connection${count === 1 ? '' : 's'}`)] : []),
     reset,
+  );
+}
+
+// ---- open calls: the intent board (browse + post + digest) ----------------
+
+const TIME_BANDS = ['weekday_day', 'weekday_eve', 'weekend_day', 'weekend_eve'];
+const ACTIVITY_CLASSES = ['games', 'food', 'outdoors', 'arts', 'sport', 'learning'];
+const GROUP_SIZES: OpenCall['groupSize'][] = ['one_on_one', 'small', 'either'];
+const BAND_LABEL: Record<CallMatch['band'], string> = { high: '✨ great match', medium: '· good match', low: '· possible match' };
+const prettyBand = (b: string) => b.replace(/_/g, ' ');
+
+async function intentBoardScreen(node: Node, profile: PrivateProfile) {
+  const community = activeCommunityId();
+  const membership = new IntentBoardMembership(node, relayUrl(), community);
+  let calls: OpenCall[] = [];
+
+  const forYou = el('div', {});
+  const others = el('div', {});
+  const status = el('p', { class: 'muted' }, 'Loading the board…');
+
+  // Turning a call into a hangout reuses the gated negotiation — so close the
+  // board subscription first (one socket per fingerprint on the relay).
+  const respond = (call: OpenCall) => {
+    membership.close();
+    startConnectPeer(node, profile, { pubKey: call.pubKey, encPubKey: call.encPubKey });
+  };
+
+  const callCard = (call: OpenCall, match: CallMatch | null) => {
+    const card = el('div', { class: 'card' });
+    card.append(
+      el('div', {}, `${prettyBand(call.activityClass)} · ${prettyBand(call.timeBand)}`),
+      el('div', { class: 'muted' }, `📍 ${call.geoCell} · ${prettyBand(call.groupSize)}`),
+    );
+    if (match) card.append(el('div', { class: 'muted' }, `${BAND_LABEL[match.band]} — ${match.reasons.join('; ')}`));
+    const btn = el('button', {}, 'Respond');
+    btn.onclick = () => respond(call);
+    card.append(btn);
+    return card;
+  };
+
+  const render = () => {
+    // The digest: calls that match the owner's profile, ranked; then everything else.
+    const rank = { high: 3, medium: 2, low: 1 } as const;
+    const matched = calls
+      .map((c) => ({ call: c, match: matchCall(c, profile) }))
+      .filter((x): x is { call: OpenCall; match: CallMatch } => x.match !== null)
+      .sort((a, b) => rank[b.match.band] - rank[a.match.band]);
+    const matchedKeys = new Set(matched.map((m) => m.call.pubKey));
+    const rest = calls.filter((c) => !matchedKeys.has(c.pubKey));
+
+    forYou.innerHTML = '';
+    forYou.append(el('h2', {}, '✨ For you'));
+    if (!matched.length) forYou.append(el('p', { class: 'muted' }, 'No calls match your interests yet.'));
+    for (const m of matched) forYou.append(callCard(m.call, m.match));
+
+    others.innerHTML = '';
+    others.append(el('h2', {}, 'All open calls'));
+    if (!rest.length) others.append(el('p', { class: 'muted' }, calls.length ? '(all shown above)' : 'Nobody has posted a call yet. Be the first!'));
+    for (const c of rest) others.append(callCard(c, null));
+
+    status.textContent = `${calls.length} open call${calls.length === 1 ? '' : 's'} on the board.`;
+  };
+
+  const post = el('button', {}, '📣 Post an open call');
+  post.onclick = () => postCallScreen(node, profile);
+  const back = el('button', { class: 'ghost' }, 'Back');
+  back.onclick = () => {
+    membership.close();
+    home(node);
+  };
+
+  screen(
+    el('h1', {}, 'Open calls'),
+    el('p', { class: 'muted' }, `Community: ${activeCommunityName()}. What people are up for — only coarse details are public; your exact time, place, and contact stay private until you both say yes.`),
+    post,
+    status,
+    forYou,
+    others,
+    back,
+  );
+
+  try {
+    await membership.join({
+      onCalls: (cs) => {
+        calls = cs;
+        render();
+      },
+    });
+  } catch {
+    status.textContent = "(couldn't reach the board — check the server is running)";
+  }
+}
+
+function postCallScreen(node: Node, profile: PrivateProfile) {
+  const sel = (id: string, opts: string[], val: string) => {
+    const s = el('select', {}) as HTMLSelectElement;
+    s.id = id;
+    for (const o of opts) s.append(el('option', { value: o }, prettyBand(o)));
+    if (opts.includes(val)) s.value = val;
+    return s;
+  };
+  const activity = sel('activity', ACTIVITY_CLASSES, profile.activityClasses[0] ?? 'games');
+  const time = sel('time', TIME_BANDS, profile.timeBands[0] ?? 'weekend_day');
+  const group = sel('group', GROUP_SIZES, profile.groupPref);
+  const geo = el('input', { value: profile.geoCell, placeholder: 'neighborhood (e.g. northside)' }) as HTMLInputElement;
+  const life = sel('life', ['today', 'this week'], 'this week');
+
+  const publish = el('button', {}, 'Publish to the board');
+  publish.onclick = () => {
+    const HOUR = 3_600_000;
+    const expiry = Date.now() + (life.value === 'today' ? 24 * HOUR : 7 * 24 * HOUR);
+    const community = activeCommunityId();
+    const call = node.openCall({
+      community,
+      activityClass: activity.value,
+      timeBand: time.value,
+      geoCell: geo.value.trim() || profile.geoCell,
+      groupSize: group.value as OpenCall['groupSize'],
+      expiry,
+      nonce: rid(),
+    });
+    // Post over a short-lived membership, then return to the board to see it live.
+    const m = new IntentBoardMembership(node, relayUrl(), community);
+    void m.join({ call }).then(() => {
+      setTimeout(() => {
+        m.close();
+        intentBoardScreen(node, profile);
+      }, 300);
+    });
+  };
+
+  screen(
+    el('h1', {}, 'Post an open call'),
+    el('p', { class: 'muted' }, 'This publishes only coarse, public details — activity, rough time, neighborhood, group size. No exact time, address, name, or contact. Publishing is your OK to share this much.'),
+    el('h2', {}, 'Activity'),
+    activity,
+    el('h2', {}, 'Rough time'),
+    time,
+    el('h2', {}, 'Neighborhood'),
+    geo,
+    el('h2', {}, 'Group size'),
+    group,
+    el('h2', {}, 'Show it for'),
+    life,
+    publish,
+    backBtn(() => intentBoardScreen(node, profile)),
+  );
+}
+
+// ---- communities: create / join / switch / share --------------------------
+
+function communitiesScreen(node: Node, profile: PrivateProfile) {
+  const book = loadCommunities();
+  const list = el('div', {});
+
+  const row = (title: string, sub: string, active: boolean, actions: HTMLElement[]) => {
+    const card = el('div', { class: 'card' });
+    card.append(el('div', {}, `${active ? '✓ ' : ''}${title}`), el('div', { class: 'muted' }, sub));
+    const bar = el('div', { class: 'row' });
+    for (const a of actions) bar.append(a);
+    card.append(bar);
+    return card;
+  };
+
+  // The shared in-person default.
+  const useLocal = el('button', { class: 'ghost' }, 'Use');
+  useLocal.onclick = () => {
+    const b = loadCommunities();
+    b.setActive(null);
+    saveCommunities(b);
+    communitiesScreen(node, profile);
+  };
+  list.append(row('Local (default)', 'Anyone on this server — good for in-person meetups.', book.activeId() === null, book.activeId() === null ? [] : [useLocal]));
+
+  for (const c of book.list()) {
+    const id = c.descriptor.community.id;
+    const active = book.activeId() === id;
+    const actions: HTMLElement[] = [];
+    if (!active) {
+      const use = el('button', { class: 'ghost' }, 'Use');
+      use.onclick = () => {
+        const b = loadCommunities();
+        b.setActive(id);
+        saveCommunities(b);
+        communitiesScreen(node, profile);
+      };
+      actions.push(use);
+    }
+    const share = el('button', { class: 'ghost' }, 'Share');
+    share.onclick = () => shareCommunityScreen(node, profile, c.descriptor);
+    actions.push(share);
+    const leave = el('button', { class: 'ghost' }, 'Leave');
+    leave.onclick = () => {
+      const b = loadCommunities();
+      b.remove(id);
+      saveCommunities(b);
+      communitiesScreen(node, profile);
+    };
+    actions.push(leave);
+    const tag = c.secret ? 'you created this' : 'joined';
+    list.append(row(c.descriptor.community.name, `${tag} · ${id}`, active, actions));
+  }
+
+  const create = el('button', {}, '➕ Create a community');
+  create.onclick = () => createCommunityScreen(node, profile);
+  const join = el('button', {}, '🔗 Join by code');
+  join.onclick = () => joinByCodeScreen(node, profile);
+
+  screen(
+    el('h1', {}, 'Communities'),
+    el('p', { class: 'muted' }, 'A community scopes your open-calls board to a group — a neighborhood, a club, a friend circle. The active one is where your board posts and reads.'),
+    list,
+    create,
+    join,
+    backBtn(() => home(node)),
+  );
+}
+
+function createCommunityScreen(node: Node, profile: PrivateProfile) {
+  const name = el('input', { placeholder: 'Community name (e.g. Northside Board Gamers)' }) as HTMLInputElement;
+  const make = el('button', {}, 'Create & make active');
+  make.onclick = () => {
+    if (!name.value.trim()) return;
+    const b = loadCommunities();
+    // The founder is seeded as the first trust root; relays carry the current server.
+    const c = b.create({ name: name.value.trim(), founder: node.identity.pubKey, relays: [relayUrl()] });
+    saveCommunities(b);
+    shareCommunityScreen(node, profile, c.descriptor);
+  };
+  screen(
+    el('h1', {}, 'Create a community'),
+    el('p', { class: 'muted' }, "A community is just a keypair — no server owns it. You'll get a join code to share. You keep the key that can update it."),
+    name,
+    make,
+    backBtn(() => communitiesScreen(node, profile)),
+  );
+}
+
+function joinByCodeScreen(node: Node, profile: PrivateProfile) {
+  const input = el('textarea', { placeholder: 'Paste a join code or the full link', rows: '4', style: 'width:100%' }) as HTMLTextAreaElement;
+  const status = el('p', { class: 'muted' }, '');
+  const join = el('button', {}, 'Join');
+  join.onclick = () => {
+    const raw = input.value.trim();
+    const kw = parseKw1FromHash(raw.includes('kw1=') ? raw : `#kw1=${raw}`) ?? decodeKw1(raw);
+    if (!kw || kw.kind !== 'community') {
+      status.textContent = "That doesn't look like a community join code.";
+      return;
+    }
+    const b = loadCommunities();
+    const r = b.join(kw as CommunityDescriptorV1, Date.now());
+    if (!r.ok) {
+      status.textContent = "That community code couldn't be verified (it may be invalid or expired).";
+      return;
+    }
+    saveCommunities(b);
+    communitiesScreen(node, profile);
+  };
+  screen(
+    el('h1', {}, 'Join a community'),
+    el('p', { class: 'muted' }, 'Paste the code someone shared (or open their link directly). Joining is public — only your open calls are shared, and only coarsely.'),
+    input,
+    join,
+    status,
+    backBtn(() => communitiesScreen(node, profile)),
+  );
+}
+
+function shareCommunityScreen(node: Node, profile: PrivateProfile, descriptor: CommunityDescriptorV1) {
+  const link = inviteUrl(location.origin, descriptor);
+  const qr = qrcode(0, 'M');
+  qr.addData(link);
+  qr.make();
+  const qrBox = el('div', { class: 'qr' });
+  qrBox.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 1 });
+
+  const status = el('p', { class: 'muted' }, '');
+  const share = el('button', {}, '📨 Send join link');
+  share.onclick = async () => {
+    try {
+      await (navigator as unknown as { share: (d: { title: string; text: string; url: string }) => Promise<void> }).share({ title: `Join ${descriptor.community.name} on Kinweave`, text: `Join ${descriptor.community.name}`, url: link });
+    } catch {
+      try {
+        await navigator.clipboard?.writeText(link);
+        status.textContent = 'Link copied — send it to your people.';
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+  screen(
+    el('h1', {}, descriptor.community.name),
+    el('p', { class: 'muted' }, 'Others scan this (or open the link) to join. Everyone who joins shares one open-calls board.'),
+    el('div', { style: 'text-align:center' }, qrBox),
+    share,
+    el('div', { class: 'link' }, link),
+    status,
+    backBtn(() => communitiesScreen(node, profile)),
   );
 }
 
@@ -445,7 +758,7 @@ function groupsScreen(node: Node) {
 // ---- connect (show QR; wait as responder) ---------------------------------
 
 async function connectScreen(node: Node, profile: PrivateProfile) {
-  const invite = makeInvite(node, { hobbyTags: profile.hobbyTags, geoCell: profile.geoCell, community: 'local' });
+  const invite = makeInvite(node, { hobbyTags: profile.hobbyTags, geoCell: profile.geoCell, community: activeCommunityId() });
   const link = inviteUrl(location.origin, invite);
 
   const qr = qrcode(0, 'M');
@@ -488,10 +801,15 @@ async function connectScreen(node: Node, profile: PrivateProfile) {
 // ---- pair (scanner = initiator) -------------------------------------------
 
 function startConnect(node: Node, profile: PrivateProfile, beacon: PresenceBeacon) {
+  startConnectPeer(node, profile, { pubKey: beacon.pubKey, encPubKey: beacon.encPubKey });
+}
+
+/** Begin a negotiation as initiator against a peer identified by their keys (e.g. from an OpenCall). */
+function startConnectPeer(node: Node, profile: PrivateProfile, peer: { pubKey: string; encPubKey: string }) {
   runSession(node, profile, {
     role: 'initiator',
-    peer: { pubKey: beacon.pubKey, encPubKey: beacon.encPubKey },
-    counterpartFp: fingerprint(beacon.pubKey),
+    peer,
+    counterpartFp: fingerprint(peer.pubKey),
   });
 }
 
@@ -499,6 +817,32 @@ function tryPair(node: Node): boolean {
   const kw = parseKw1FromHash(location.hash);
   if (!kw) return false;
   history.replaceState(null, '', location.pathname); // don't re-trigger on refresh
+  if (kw.kind === 'community') {
+    // A "join this network" link. Verify, offer to join, then land on the board.
+    const valid = verifyCommunity(kw, Date.now());
+    const p0 = loadProfile();
+    const back = () => (p0 ? home(node) : onboarding(node));
+    if (!valid) {
+      screen(el('h1', {}, 'Invalid community link'), el('p', { class: 'muted' }, "That community code couldn't be verified (it may be tampered or expired)."), backBtn(back));
+      return true;
+    }
+    const join = el('button', {}, `Join ${kw.community.name}`);
+    join.onclick = () => {
+      const b = loadCommunities();
+      b.join(kw, Date.now());
+      saveCommunities(b);
+      p0 ? intentBoardScreen(node, p0) : onboarding(node);
+    };
+    const cancel = el('button', { class: 'ghost' }, 'Not now');
+    cancel.onclick = back;
+    screen(
+      el('h1', {}, 'Join this community?'),
+      el('p', { class: 'muted' }, `${kw.community.name} — you'll share one open-calls board with everyone who joins. Only coarse call details are public.`),
+      join,
+      cancel,
+    );
+    return true;
+  }
   if (kw.kind !== 'invite' || !verifyInvite(kw)) {
     screen(el('h1', {}, 'Invalid link'), el('p', { class: 'muted' }, "That connect link couldn't be verified. Ask them to send a fresh one."));
     return true;

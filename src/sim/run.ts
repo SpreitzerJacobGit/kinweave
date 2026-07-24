@@ -5,6 +5,7 @@
  *   npm run sim -- --pair incompatible
  *   npm run sim -- --adversary scraper|injector|oracle
  *   npm run sim -- --p2p                 (peer-to-peer: discovery + sealed transport)
+ *   npm run sim -- --calls               (intent board: structured intents -> match -> hangout)
  */
 
 import { negotiate } from '../core/state-machine';
@@ -16,6 +17,8 @@ import { frameInbound } from '../core/inbound-envelope';
 import { P2PNode } from '../core/node';
 import { Relay } from '../core/transport';
 import { PresenceBoard } from '../core/discovery';
+import { Node } from '../portable/crypto';
+import { StandingIntentBook } from '../portable/standing-intents';
 
 function arg(name: string, fallback = ''): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -130,8 +133,54 @@ function runP2P() {
   line(`  tampered envelope accepted? ${relay.send(forged).accepted}`);
 }
 
+function runCalls() {
+  line('\n=== Intent board: structured intents -> local match -> gated hangout (spec/10) ===');
+  const NOW = 1_000_000;
+  const HOUR = 3_600_000;
+  const CID = ava.community; // 'northside-climbers'
+  const benNode = new Node();
+  const cleoNode = new Node();
+
+  // Ben and Cleo publish coarse OpenCalls to the community intent board.
+  const bensCall = benNode.openCall({ community: CID, activityClass: 'games', timeBand: 'weekend_day', geoCell: 'northside', groupSize: 'one_on_one', expiry: NOW + 24 * HOUR, nonce: 'ben-1' });
+  const cleosCall = cleoNode.openCall({ community: CID, activityClass: 'nightlife', timeBand: 'weekday_eve', geoCell: 'downtown', groupSize: 'small', expiry: NOW + 24 * HOUR, nonce: 'cleo-1' });
+  const board = [bensCall, cleosCall];
+  line(`  board holds ${board.length} open call(s): ${board.map((c) => `${c.activityClass}/${c.timeBand}/${c.geoCell}`).join('  ')}`);
+
+  // The wire atoms carry nothing from Zone O.
+  const wire = JSON.stringify(board);
+  line(`  board leaks a coordinate / name / contact / raw vector? ${/homeCoordinate|legalName|signal:@|interestVector/.test(wire)}`);
+
+  // Ava's standing intent passively matches the board (owner-side digest, anti-spiral bounded).
+  const book = new StandingIntentBook([
+    { id: 'si-games', activityClasses: ['games'], timeBands: ['weekend_day', 'weekend_eve'], geoCells: ['northside'], groupSize: 'any', until: NOW + 30 * 24 * HOUR },
+  ]);
+  const digest = book.digest(board, ava, { now: NOW });
+  line(`  ava's digest surfaced ${digest.length} candidate(s):`);
+  for (const c of digest) {
+    const who = c.call.pubKey === benNode.identity.pubKey ? 'ben' : c.call.pubKey === cleoNode.identity.pubKey ? 'cleo' : '?';
+    line(`    - ${who}: band=${c.match.band}  (${c.match.reasons.join('; ')})`);
+  }
+  line(`  cleo filtered out (no shared activity/schedule/geo)? ${!digest.some((c) => c.call.pubKey === cleoNode.identity.pubKey)}`);
+
+  // The surfaced candidate → the SAME gated pairwise negotiation as `--pair compatible`.
+  const [a, b] = makePair(ava, ben, approveAll, approveAll, {}, {}, new Clock());
+  const res = negotiate(a, b);
+  if (res.outcome === 'committed' && res.artifact) {
+    const art = res.artifact;
+    line(`  ava responded to ben's call -> COMMITTED (${art.versionHash})`);
+    line(`    plan: ${art.plan.activity.specific} @ ${art.plan.place.name}, ${art.plan.time.date} ${art.plan.time.start}`);
+    line(`    published on the board (coarse): activityClass, timeBand, geoCell, groupSize`);
+    line(`    still private (Zone O): ${art.disclosureLedger.stillPrivate.join(', ')}`);
+  } else {
+    line(`  negotiation abandoned: code=${res.code}`);
+  }
+}
+
 const adv = arg('adversary');
-if (process.argv.includes('--p2p')) {
+if (process.argv.includes('--calls')) {
+  runCalls();
+} else if (process.argv.includes('--p2p')) {
   runP2P();
 } else if (adv) {
   runAdversary(adv);

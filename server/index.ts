@@ -16,8 +16,11 @@ import { join, dirname, extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { networkInterfaces } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { fingerprint, signedBody, verifySig, type WireEnvelope } from '../src/portable/crypto';
+import { fingerprint, signedBody, verifySig } from '../src/portable/crypto';
 import type { ClientMsg, ServerMsg } from '../src/portable/wire-protocol';
+import { CommunityBoardStore, handleCommunityMsg } from '../src/net/community-board';
+import { IntentBoardStore, handleIntentMsg } from '../src/net/intent-board';
+import { nullSink, sinkFromEnv, type SnapshotSink, type StoredMail } from '../src/net/relay-persistence';
 import { makeLLM, type ProviderConfig } from '../src/ai/providers';
 import { runOnboardingTurn, extractDraft } from '../src/ai/onboarding';
 
@@ -35,15 +38,32 @@ const MIME: Record<string, string> = {
 
 // ---- relay (store-and-forward, ciphertext only) ---------------------------
 
-interface Stored {
-  mailId: string;
-  env: WireEnvelope;
-}
+type Stored = StoredMail;
 
-function attachRelay(wss: WebSocketServer): void {
+function attachRelay(wss: WebSocketServer, sink: SnapshotSink = nullSink): void {
   const mail = new Map<string, Stored[]>();
   const subs = new Map<string, WebSocket>();
+  const board = new CommunityBoardStore();
+  const intents = new IntentBoardStore();
   let counter = 0;
+
+  // Durability (opt-in via KINWEAVE_DATA_DIR): restore undelivered mail + boards
+  // so a process restart doesn't silently drop an in-flight hangout message.
+  const buildSnapshot = () => ({
+    v: 1 as const,
+    counter,
+    mail: [...mail] as [string, Stored[]][],
+    intents: intents.toSnapshot(),
+    community: board.toSnapshot(),
+  });
+  const persist = () => sink.save(buildSnapshot);
+  const restored = sink.load();
+  if (restored) {
+    counter = restored.counter;
+    for (const [to, q] of restored.mail) mail.set(to, q);
+    intents.loadSnapshot(restored.intents);
+    board.loadSnapshot(restored.community);
+  }
 
   wss.on('connection', (ws) => {
     let requested = '';
@@ -67,6 +87,7 @@ function attachRelay(wss: WebSocketServer): void {
         mail.set(m.env.to, q);
         const live = subs.get(m.env.to);
         if (live && live.readyState === 1) deliver(live, stored);
+        persist();
         reply({ t: 'accepted' });
       } else if (m.t === 'subscribe') {
         requested = m.fingerprint;
@@ -82,10 +103,19 @@ function attachRelay(wss: WebSocketServer): void {
       } else if (m.t === 'ack') {
         if (!authed) return;
         mail.set(authed, (mail.get(authed) ?? []).filter((s) => !m.mailIds.includes(s.mailId)));
+        persist();
+      } else if (m.t === 'post_beacon' || m.t === 'sub_community' || m.t === 'unsub_community') {
+        handleCommunityMsg(board, ws, m, (msg) => ws.send(JSON.stringify(msg)));
+        if (m.t === 'post_beacon') persist();
+      } else if (m.t === 'post_call' || m.t === 'sub_calls' || m.t === 'unsub_calls') {
+        handleIntentMsg(intents, ws, m, (msg) => ws.send(JSON.stringify(msg)));
+        if (m.t === 'post_call') persist();
       }
     });
     ws.on('close', () => {
       if (authed && subs.get(authed) === ws) subs.delete(authed);
+      board.removeSocket(ws);
+      intents.removeSocket(ws);
     });
   });
 }
@@ -163,7 +193,8 @@ export function startServer(port = Number(process.env.PORT ?? 8788)): Promise<Ru
     serveFile(res, rel === 'app.js' ? join(WEB, 'dist', 'app.js') : join(WEB, rel));
   });
   const wss = new WebSocketServer({ server: http, path: '/relay' });
-  attachRelay(wss);
+  const sink = sinkFromEnv();
+  attachRelay(wss, sink);
 
   return new Promise((resolve) => {
     http.listen(port, '0.0.0.0', () => {
@@ -171,7 +202,12 @@ export function startServer(port = Number(process.env.PORT ?? 8788)): Promise<Ru
       const p = typeof addr === 'object' && addr ? addr.port : port;
       resolve({
         port: p,
-        close: () => new Promise((r) => http.close(() => wss.close(() => r()))),
+        // Flush any pending snapshot before we go down so a graceful restart
+        // (Render spin-down sends SIGTERM) loses no undelivered mail.
+        close: () => new Promise((r) => {
+          sink.flush();
+          http.close(() => wss.close(() => r()));
+        }),
       });
     });
   });
@@ -189,11 +225,16 @@ function lanUrls(port: number): string[] {
 
 const invokedDirectly = !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (invokedDirectly) {
-  startServer().then(({ port }) => {
+  startServer().then((server) => {
     process.stdout.write(`\nKinweave running. Open on your phones (same Wi-Fi):\n`);
-    for (const u of lanUrls(port)) process.stdout.write(`   ${u}\n`);
-    process.stdout.write(`   (local: http://localhost:${port})\n`);
+    for (const u of lanUrls(server.port)) process.stdout.write(`   ${u}\n`);
+    process.stdout.write(`   (local: http://localhost:${server.port})\n`);
     const host = hostLLMConfig();
     process.stdout.write(host ? `AI onboarding: ON (host default: ${host.provider})\n\n` : `AI onboarding: OFF (users bring their own key, or set LLM_PROVIDER+LLM_API_KEY / ANTHROPIC_API_KEY)\n\n`);
+    process.stdout.write(process.env.KINWEAVE_DATA_DIR ? `Durability: ON (relay state -> ${process.env.KINWEAVE_DATA_DIR})\n\n` : `Durability: OFF (set KINWEAVE_DATA_DIR to persist undelivered mail across restarts)\n\n`);
+    // Graceful shutdown: flush the relay snapshot before the host reaps us.
+    const bye = () => server.close().then(() => process.exit(0));
+    process.on('SIGTERM', bye);
+    process.on('SIGINT', bye);
   });
 }

@@ -11,9 +11,10 @@ import { Tier } from '../types/disclosure';
 import type { AbandonCode, Message, Stage } from '../types/envelope';
 import type { ProposedHangout } from '../types/artifact';
 import type { Persona } from '../persona/persona';
-import { buildArtifact, Caps, CommitBook, DEFAULT_CAPS, FACE_SAVING, intersect } from './negotiation-core';
+import { buildArtifact, type Caps, CommitBook, DEFAULT_CAPS, FACE_SAVING, intersect } from './negotiation-core';
 
-export { Caps, CommitBook, DEFAULT_CAPS } from './negotiation-core';
+export type { Caps } from './negotiation-core';
+export { CommitBook, DEFAULT_CAPS } from './negotiation-core';
 
 export interface NegotiationResult {
   outcome: 'committed' | 'abandoned';

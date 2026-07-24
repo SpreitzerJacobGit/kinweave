@@ -53,6 +53,45 @@ caps; reads are public and **re-verified client-side**. The board can never read
 prefs, matchmake, rank, or hold a private key — it returns the raw verified
 beacon set; all selection is client-side.
 
+## 3.1 Structured intent coordination (OpenCall + intent board)
+
+The community layer is a **discovery substrate for structured intent**, not a
+forum. Agents do not post prose and comment on threads — a literal forum would
+re-centralize human-readable content (violating spec/08 P6), open a natural-
+language injection surface the disclosure architecture exists to avoid, and leak
+preferences. Instead, intent is a first-class **signed atom**.
+
+**The `OpenCall` atom** (`src/portable/crypto.ts`, `Node.openCall`) — a signed,
+discoverable "I'd do X, this time-band, this neighborhood": `activityClass`,
+`timeBand`, `geoCell`, `groupSize`, `expiry`, `nonce`. Carries **only T0/T1
+coarse fields** — no coordinate, no exact time, no PII — so publishing is safe.
+`encPubKey` lets a responder seal the reply invite. Publishing a call is an
+owner-authored disclosure (a coarse projection the owner opted to make public).
+
+**The intent board** (`src/net/intent-board.ts`) — the sibling of the presence
+board: a relay capability keyed by community id, delegated to by BOTH relays,
+storing only signed `OpenCall`s with per-pubkey dedup (one active call per
+caller), self-expiry + TTL, size + repost caps. Like the presence board it is
+**dumb**: it can never read prefs, matchmake, or rank — it returns the raw
+verified call set and all selection is client-side. Wire messages `post_call` /
+`sub_calls` / `unsub_calls` → `community_calls` / `call_ok` / `call_rejected`,
+multiplexed over the same socket (`src/portable/intent-connect.ts`, re-verified
+mirror).
+
+**Matching is local** (`src/core/call-match.ts`, `matchCall`) — each Persona
+scores a discovered call against its OWN profile on device, returning a coarse
+band + honest frictions (schedule / geo / group). No third party computes
+anything, and unlike a two-party probe this has no remote-oracle surface (the
+caller published the call). Turning a match into a hangout reuses the **existing
+gated pairwise negotiation** — G1–G4, the disclosure ladder, and the
+`ProposedHangout` artifact are unchanged.
+
+**Ambient standing-match** (`src/portable/standing-intents.ts`) — owners declare
+rolling "I'd say yes to X" envelopes; as calls arrive, the Persona passively
+matches them and surfaces a **bounded, ranked digest** of candidates (anti-spiral
+capped per spec/07, with an `exclude` hook for blocked / cooled-down callers)
+rather than a feed to browse. A match only surfaces — it never auto-commits.
+
 ## 4. Composable trust (Sybil resistance)
 
 Verification is a signed **Attestation** (a credential atom). A community's bar is
@@ -121,11 +160,63 @@ changing callers.
 
 ## 7. Implementation status
 
-- **This PR (Milestones 0–1):** `kw1` invite atom (`src/portable/invite.ts`),
-  community identity/descriptor (`src/portable/community.ts`), attestation model
+- **Milestones 0–1:** `kw1` invite atom (`src/portable/invite.ts`), community
+  identity/descriptor (`src/portable/community.ts`), attestation model
   (`src/portable/attestation.ts`, `src/types/attestation.ts`), and the trust-policy
   evaluator with the `unique-human` slot (`src/portable/trust-policy.ts`). No
   behavior change to existing flows.
-- **Next:** the public community board + networked discovery (Milestone 2), then
-  co-presence + vouch + the enforcement seam (Milestone 3), surfaces (4), and the
-  blinded PoP issuer (5).
+- **Milestone 2 (this PR):** the public community board
+  (`src/net/community-board.ts`) delegated to by BOTH relays (`server/index.ts`,
+  `src/net/relay-server.ts`); community wire messages (`post_beacon`,
+  `sub_community`, `unsub_community` → `community_beacons`, `post_ok`,
+  `post_rejected`) multiplexed over the existing relay socket
+  (`src/portable/relay-connect.ts`); networked discovery with a re-verified local
+  mirror (`src/portable/community-connect.ts`). End-to-end: N nodes scan one
+  community QR → join the board → discover each other → a discovered beacon feeds
+  the existing gated pairwise negotiation to a committed hangout. The board holds
+  only signed T0 beacons; the enforcement (trust-policy) hook defaults to
+  allow-all here.
+- **Milestone 3 (this PR):** the trust engine + enforcement. Co-presence
+  attestations (`src/portable/co-presence.ts`, mutual & non-self-mintable); vouch
+  / vouch-revoke (`src/portable/vouch.ts`); the seeded-flow scorer
+  (`src/portable/trust-graph.ts`, `TrustScorer`); and the connect gate
+  (`src/portable/community-gate.ts`) wired into `src/core/negotiation-driver.ts`
+  `checkCommunity` — the joiner's bundle + declared identity ride the sealed
+  HELLO, the receiver runs the policy, and a failure is `abandon('policy_unmet')`
+  BEFORE G1. Opt-in `TrustWiring`; plain pairwise negotiations are byte-identical
+  (parity/protocol/e2e unaffected). The trust-policy evaluator is now subject-bound
+  and rejects self-issued credentials. Binding the declared subject to the actual
+  sealed-sender key is the one piece deferred to the Session (M4).
+- **Milestone 4 (structured intent, this PR):** the `OpenCall` intent atom
+  (`src/portable/crypto.ts`) + the dumb intent board (`src/net/intent-board.ts`)
+  delegated to by BOTH relays; local matching (`src/core/call-match.ts`); the
+  intent membership client (`src/portable/intent-connect.ts`); and ambient
+  standing-match with a bounded owner digest (`src/portable/standing-intents.ts`).
+  End-to-end: a discovered `OpenCall` matches locally then drives the existing
+  gated negotiation to a committed hangout (`test/intent-negotiate.test.ts`,
+  versionHash parity with the reference sim). Sim: `npm run sim -- --calls`. The
+  board holds only coarse T0/T1 fields; the negotiation kernel is untouched.
+- **Milestone 5 (intent surfaces, this PR):** the human + agent front doors for
+  the intent board. PWA (`web/app.ts`): an "Open calls" screen that browses the
+  live re-verified board, a "✨ For you" digest (each call scored by `matchCall`),
+  a post-an-open-call form (coarse fields only), and Respond → the existing gated
+  negotiation. MCP (`mcp/server.ts`, driven via `KinweaveAgent`): `post_open_call`
+  / `list_open_calls` (scored) / `respond_to_call`, sharing ONE relay socket with
+  the negotiation. End-to-end tool path proven in `test/mcp-intent.test.ts`
+  (post → discover → respond → committed).
+- **Milestone 6 (community create/join, this PR):** surfaces to create and join
+  real communities, so the boards key on a minted community id instead of the
+  shared `local` default. A device-side `CommunityBook` (`src/portable/community-book.ts`,
+  pure + serializable) holds joined descriptors (+ the mint secret for ones this
+  device founded) and the active selection, over the existing `mintCommunity` /
+  `verifyCommunity` / `kw1 kind:'community'` primitives. PWA (`web/app.ts`): a
+  "Communities" screen (create / join-by-code / switch / share-QR) and a boot
+  handler for `#kw1=<community>` join links; the intent board + connect invite
+  now key on the active community. MCP (`mcp/server.ts` via `KinweaveAgent.setCommunity`):
+  `create_community` / `join_community` / `communities` / `use_community`.
+  `test/mcp-community.test.ts` proves boards are community-scoped and a different
+  community is isolated; `test/community-book.test.ts` covers the store.
+- **Next:** wiring the real attestation bundle from the store into the HELLO and
+  the Session subject-bind (so a community's `TrustPolicy` actually gates joins in
+  the app, not just the tested seam); the blinded PoP issuer, VOPRF on @noble
+  ristretto.

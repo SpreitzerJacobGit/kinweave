@@ -117,6 +117,11 @@ export function makeInvite(node: Node, input: MakeInviteInput): InviteV1 {
   };
 }
 
+/** Wrap a beacon discovered on a community board into a connectable invite. */
+export function inviteForBeacon(beacon: PresenceBeacon, relays: string[] = [], rt?: string): InviteV1 {
+  return { v: 1, kind: 'invite', beacon, rt: rt ?? rid(), exp: 0, relays };
+}
+
 /** Verify a pairwise invite: the beacon is validly self-signed and unexpired. */
 export function verifyInvite(inv: InviteV1, now?: number): boolean {
   if (inv.v !== 1 || inv.kind !== 'invite') return false;

@@ -68,4 +68,5 @@ export type AbandonCode =
   | 'owner_declined'
   | 'owner_timeout'
   | 'commit_failed'
-  | 'budget_exhausted';
+  | 'budget_exhausted'
+  | 'policy_unmet';
