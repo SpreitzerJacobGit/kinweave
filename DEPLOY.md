@@ -54,6 +54,27 @@ docker run -p 8788:8788 -e ANTHROPIC_API_KEY=sk-ant-... kinweave
 Put it behind HTTPS (the platform's proxy, or Caddy/nginx). WebSockets must be
 allowed to pass through on `/relay` (they are on Render/Fly/Railway by default).
 
+## Durability (surviving restarts)
+
+The relay holds undelivered mail and the community/open-call boards **in memory**.
+That's fine while the process stays up, but a restart or redeploy drops anything
+in flight — and a free-tier host that sleeps on idle restarts on the next visit.
+For an unattended pilot where people negotiate hours apart, turn on persistence:
+
+- Set **`KINWEAVE_DATA_DIR`** to a writable path (e.g. `/data`). The relay then
+  snapshots its state (signed ciphertext + public signed atoms only — never
+  plaintext or keys) to `relay.json` and restores it on boot. Unset = off
+  (in-memory, as before).
+- The path must survive restarts, so **mount a persistent disk there**:
+  - **Render:** add a Disk (mount path `/data`) — requires a paid instance; also
+    keeps the instance from sleeping. Then set `KINWEAVE_DATA_DIR=/data`.
+  - **Fly.io:** `flyctl volumes create kwdata --size 1`, mount at `/data`, set the env var.
+  - **Docker/VPS:** `docker run -v kwdata:/data -e KINWEAVE_DATA_DIR=/data …`.
+
+On free ephemeral disks the snapshot still guards against process crashes within a
+live instance, but is wiped on redeploy/sleep — so for a real pilot use an
+always-on instance with a mounted disk.
+
 ## Then: the link you send
 
 - **Get the app:** share `https://<your-host>/` — anyone opens it, builds a

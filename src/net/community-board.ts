@@ -49,6 +49,12 @@ interface Entry {
   expiresAt: number;
 }
 
+/** Serializable form of the board (public signed beacons only — no sockets). */
+export interface CommunityBoardSnapshot {
+  boards: [string, Entry[]][]; // communityId -> live entries
+  lastPost: [string, number][];
+}
+
 export type PostResult = { ok: true } | { ok: false; reason: string };
 
 export class CommunityBoardStore {
@@ -111,6 +117,30 @@ export class CommunityBoardStore {
     if (!board) return [];
     this.sweepBoard(board);
     return [...board.values()].map((e) => e.beacon);
+  }
+
+  /**
+   * Snapshot the live (unexpired) board for durability. Only public signed T0
+   * presence beacons and re-post timestamps — never a socket or a private key.
+   */
+  toSnapshot(): CommunityBoardSnapshot {
+    const boards: [string, Entry[]][] = [];
+    for (const [c, m] of this.boards) {
+      this.sweepBoard(m);
+      if (m.size) boards.push([c, [...m.values()]]);
+    }
+    return { boards, lastPost: [...this.lastPost] };
+  }
+
+  /** Restore a snapshot on boot, dropping anything that expired while down. */
+  loadSnapshot(snap: CommunityBoardSnapshot): void {
+    const t = this.now();
+    for (const [c, entries] of snap.boards) {
+      const m = this.boards.get(c) ?? new Map<string, Entry>();
+      for (const e of entries) if (e.expiresAt > t) m.set(e.beacon.pubKey, e);
+      if (m.size) this.boards.set(c, m);
+    }
+    for (const [k, ts] of snap.lastPost) this.lastPost.set(k, ts);
   }
 
   private broadcast(communityId: string): void {
