@@ -14,13 +14,14 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { Node, fingerprint } from '../src/portable/crypto';
 import { KinweaveAgent } from '../src/portable/agent';
 import { assembleProfile, validateDraft } from '../src/ai/onboarding';
+import { ACTIVITY_CLASSES, TIME_BANDS, ENERGY_LEVELS, SETTING_PREFS, GROUP_PREFS, NOVELTY_PREFS } from '../src/types/vocab';
 import type { PrivateProfile } from '../src/types/profile';
 import { emptyStore, upsertConnection, addTag, createGroup, setInGroup, connectionsList, groupsFor, type SocialStore, type Connection } from '../src/portable/social';
 import { CommunityBook, type CommunityBookState } from '../src/portable/community-book';
@@ -28,6 +29,7 @@ import { encodeKw1, decodeKw1 } from '../src/portable/invite';
 
 const HOME = process.env.KINWEAVE_HOME ?? join(homedir(), '.kinweave');
 const STATE = join(HOME, 'state.json');
+const DRAFT = join(HOME, 'persona-draft.json'); // handoff: an AI that read the repo (no MCP yet) drops a ProfileDraft here
 const RELAY = process.env.KINWEAVE_RELAY ?? 'ws://127.0.0.1:8788/relay';
 
 interface Persisted {
@@ -55,7 +57,31 @@ let profile: PrivateProfile | null = state.profile ?? null;
 const social: SocialStore = state.social ?? emptyStore();
 const communities: CommunityBook = CommunityBook.fromJSON(state.communities ?? {});
 let agent: KinweaveAgent | null = null;
-if (!state.keys) save();
+
+/**
+ * No-MCP handoff pickup: if the owner had their AI run the interview before this
+ * connector existed, it wrote a portable ProfileDraft to ~/.kinweave/persona-draft.json.
+ * Adopt it on first launch when no Persona is set, then retire the file.
+ */
+function adoptDraftFile(): void {
+  if (profile) return;
+  let raw: string;
+  try {
+    raw = readFileSync(DRAFT, 'utf8');
+  } catch {
+    return;
+  }
+  try {
+    const draft = validateDraft(JSON.parse(raw));
+    profile = assembleProfile(draft, { ownerId: node.id, firstName: '', legalName: '', homeCoordinate: { lat: 0, lng: 0 }, contact: '' });
+    unlinkSync(DRAFT);
+    process.stderr.write(`kinweave: adopted persona draft from ${DRAFT}\n`);
+  } catch (e) {
+    process.stderr.write(`kinweave: ignoring invalid ${DRAFT}: ${(e as Error).message}\n`);
+  }
+}
+adoptDraftFile();
+save();
 
 function ensureAgent(): KinweaveAgent {
   if (!profile) throw new Error('Build your Persona first with kinweave_save_persona.');
@@ -97,24 +123,25 @@ server.tool(
 
 server.tool(
   'kinweave_save_persona',
-  "Build/replace the user's Kinweave Persona from what they told you. Collect interests and preferences through normal conversation, then call this. Do NOT collect legal name, home address, or precise location.",
+  "Build/replace the user's Kinweave Persona from what they told you. Run the interview in spec/11-persona-interview.md, then call this. Collect interests and preferences through normal conversation; do NOT collect legal name, home address, or precise location. firstName and contact are optional and stay on the device — shared only after both people approve.",
   {
     hobbies: z.array(z.string()).describe('interests, e.g. ["climbing","board games","coffee"]'),
-    activities: z.array(z.enum(['games', 'food', 'outdoors', 'arts', 'sport', 'learning'])).optional(),
-    timeBands: z.array(z.enum(['weekday_day', 'weekday_eve', 'weekend_day', 'weekend_eve'])).optional(),
-    energyLevel: z.enum(['low', 'medium', 'high']).optional(),
-    settingPref: z.enum(['public_venue', 'outdoor', 'either']).optional(),
+    activities: z.array(z.enum(ACTIVITY_CLASSES)).optional(),
+    timeBands: z.array(z.enum(TIME_BANDS)).optional(),
+    energyLevel: z.enum(ENERGY_LEVELS).optional(),
+    settingPref: z.enum(SETTING_PREFS).optional(),
     valueTags: z.array(z.string()).optional().describe('vibe, e.g. ["quiet","sober-friendly"]'),
     hardConstraints: z.array(z.string()).optional().describe('e.g. ["no_alcohol"]'),
-    groupPref: z.enum(['one_on_one', 'small', 'either']).optional(),
-    noveltyPref: z.enum(['familiar', 'new', 'either']).optional(),
-    firstName: z.string().describe('shared only after both people approve'),
-    contact: z.string().describe('how to reach them day-of, e.g. "signal:@you" — shared only post-commit'),
+    groupPref: z.enum(GROUP_PREFS).optional(),
+    noveltyPref: z.enum(NOVELTY_PREFS).optional(),
+    handle: z.string().optional().describe('a public display name — NOT their real name; shown at the public tier'),
+    firstName: z.string().optional().describe('their real first name — stored on device, shared only after both approve'),
+    contact: z.string().optional().describe('how to reach them day-of, e.g. "signal:@you" — shared only post-commit'),
     geoCell: z.string().optional().describe('rough neighborhood, e.g. "northside"'),
   },
   async (a) => {
     const draft = validateDraft({
-      handle: a.firstName,
+      handle: a.handle?.trim() || `kinweaver-${node.id.slice(0, 6)}`,
       community: 'local',
       hobbyTags: a.hobbies,
       geoCell: a.geoCell ?? 'nearby',
@@ -130,10 +157,10 @@ server.tool(
     });
     profile = assembleProfile(draft, {
       ownerId: node.id,
-      firstName: a.firstName,
+      firstName: a.firstName ?? '',
       legalName: '',
       homeCoordinate: { lat: 0, lng: 0 },
-      contact: a.contact,
+      contact: a.contact ?? '',
     });
     agent = null; // rebuild with the new profile on next connect
     save();

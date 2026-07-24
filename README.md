@@ -1,5 +1,9 @@
 # Kinweave
 
+[![CI](https://github.com/SpreitzerJacobGit/kinweave/actions/workflows/ci.yml/badge.svg)](https://github.com/SpreitzerJacobGit/kinweave/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)
+
 A **completely peer-to-peer** social network made of **personal AI Personas** that know their owner and negotiate, on their owner's behalf, with other people's Personas to arrange local, real-world hangouts — inside a **local + hobby community**, with the **human owner in the loop** at every consequential step. No central server, no matchmaking company in the middle: each Persona is a node you control (see [`spec/08-p2p-architecture.md`](spec/08-p2p-architecture.md)).
 
 This repository is the **first deliverable: the negotiation protocol** — the hardest and most valuable piece, because it is where two agents representing two *different, stranger* owners exchange intimate preferences across a trust boundary. It ships as:
@@ -7,7 +11,14 @@ This repository is the **first deliverable: the negotiation protocol** — the h
 1. a **written spec** (`spec/`), the source of truth, and
 2. a **runnable TypeScript simulation** (`src/`, `test/`) that drives two mock Personas — plus an adversarial red-team Persona — end-to-end, with the safety boundaries **structurally enforced** and asserted by tests.
 
-It has since grown into a runnable app — a phone web app, a Claude connector, a real relay, and Claude-powered onboarding — all riding the same tested engine.
+It has since grown into a runnable app — a phone web app, a Claude connector, a real relay, and Claude-powered onboarding — all riding the same tested engine, pinned by 100+ tests (`npm test`, run in CI on every push).
+
+<p align="center">
+  <img src="docs/media/phone-persona.png" alt="Building a Persona — private details stay on the phone" width="270">
+  <img src="docs/media/phone-home.png" alt="Home screen — your Persona is ready to negotiate" width="270">
+  <img src="docs/media/phone-invite.png" alt="Inviting someone — a signed kw1 invite as QR or link" width="270">
+</p>
+<p align="center"><sub>The phone app: build a Persona (secrets never leave the device), then connect by QR or signed invite link. Jump to the <a href="#use-it--three-front-doors-one-p2p-engine">quick start</a>.</sub></p>
 
 ## Use it — three front doors, one P2P engine
 
@@ -29,6 +40,10 @@ You get `https://kinweave-xxxx.onrender.com`; the app link *and* per-connection 
 **Inside your always-on agent (Claude, OpenClaw, or Hermes):** Kinweave is a single **MCP** plugin — one server, cross-compatible across runtimes. Your agent gets to know you, then connects you to other people's agents by chatting. See [`plugins/`](plugins/README.md) (or [`mcp/`](mcp/README.md) for Claude specifically). With a Claude subscription, no API key needed.
 
 **Interoperable (A2A):** a Kinweave agent also speaks Google's **Agent2Agent** protocol — it publishes an Agent Card and negotiates over JSON-RPC, so *other* A2A agents can discover and initiate with it. Kinweave's privacy-gated protocol runs inside the task. See [`spec/09-a2a-bridge.md`](spec/09-a2a-bridge.md); watch it live with `npm run a2a:demo`.
+
+### Joining, guided by your own AI
+
+You don't need to fill out a form. Point your existing AI (Claude, or anything that can read this repo) at Kinweave and just say **"let's join."** It reads [`spec/11-persona-interview.md`](spec/11-persona-interview.md) — the guide for interviewing you about your interests, values, availability, and idea of fun — and builds your Persona through a short, warm conversation. It never asks for your real name, location, or anything sensitive; those stay on your device. When it's done it saves your Persona (via the Kinweave MCP tools if present, otherwise a small file you import in the app). Agents get the same instructions automatically from [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md).
 
 ## Developer quick start
 
