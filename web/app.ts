@@ -6,9 +6,11 @@
  */
 
 import qrcode from 'qrcode-generator';
-import { Node, fingerprint, type PresenceBeacon } from '../src/portable/crypto';
+import { Node, fingerprint, type PresenceBeacon, type OpenCall } from '../src/portable/crypto';
 import { makeInvite, inviteUrl, parseKw1FromHash, decodeKw1, encodeKw1, verifyInvite } from '../src/portable/invite';
 import { connectRelay, type RelayConn } from '../src/portable/relay-connect';
+import { IntentBoardMembership } from '../src/portable/intent-connect';
+import { matchCall, type CallMatch } from '../src/core/call-match';
 import { Session } from '../src/portable/session';
 import { NegotiationDriver } from '../src/core/negotiation-driver';
 import { Persona } from '../src/persona/persona';
@@ -266,6 +268,8 @@ function home(node: Node) {
 
   const connect = el('button', {}, '🔗 Connect / invite someone');
   connect.onclick = () => connectScreen(node, p);
+  const board = el('button', {}, '📣 Open calls');
+  board.onclick = () => intentBoardScreen(node, p);
   const dash = el('button', { class: 'ghost' }, '👥 Connections');
   dash.onclick = () => connectionsScreen(node);
   const reset = el('button', { class: 'ghost' }, 'Start over');
@@ -280,9 +284,154 @@ function home(node: Node) {
     el('div', { class: 'card' }, el('div', { class: 'muted' }, 'Your interests'), tags),
     el('p', { class: 'muted' }, 'Meet someone by scanning their code in person, or send them an invite link.'),
     connect,
+    board,
     dash,
     ...(count ? [el('p', { class: 'muted' }, `${count} connection${count === 1 ? '' : 's'}`)] : []),
     reset,
+  );
+}
+
+// ---- open calls: the intent board (browse + post + digest) ----------------
+
+const TIME_BANDS = ['weekday_day', 'weekday_eve', 'weekend_day', 'weekend_eve'];
+const ACTIVITY_CLASSES = ['games', 'food', 'outdoors', 'arts', 'sport', 'learning'];
+const GROUP_SIZES: OpenCall['groupSize'][] = ['one_on_one', 'small', 'either'];
+const BAND_LABEL: Record<CallMatch['band'], string> = { high: '✨ great match', medium: '· good match', low: '· possible match' };
+const prettyBand = (b: string) => b.replace(/_/g, ' ');
+
+async function intentBoardScreen(node: Node, profile: PrivateProfile) {
+  const membership = new IntentBoardMembership(node, relayUrl(), profile.community);
+  let calls: OpenCall[] = [];
+
+  const forYou = el('div', {});
+  const others = el('div', {});
+  const status = el('p', { class: 'muted' }, 'Loading the board…');
+
+  // Turning a call into a hangout reuses the gated negotiation — so close the
+  // board subscription first (one socket per fingerprint on the relay).
+  const respond = (call: OpenCall) => {
+    membership.close();
+    startConnectPeer(node, profile, { pubKey: call.pubKey, encPubKey: call.encPubKey });
+  };
+
+  const callCard = (call: OpenCall, match: CallMatch | null) => {
+    const card = el('div', { class: 'card' });
+    card.append(
+      el('div', {}, `${prettyBand(call.activityClass)} · ${prettyBand(call.timeBand)}`),
+      el('div', { class: 'muted' }, `📍 ${call.geoCell} · ${prettyBand(call.groupSize)}`),
+    );
+    if (match) card.append(el('div', { class: 'muted' }, `${BAND_LABEL[match.band]} — ${match.reasons.join('; ')}`));
+    const btn = el('button', {}, 'Respond');
+    btn.onclick = () => respond(call);
+    card.append(btn);
+    return card;
+  };
+
+  const render = () => {
+    // The digest: calls that match the owner's profile, ranked; then everything else.
+    const rank = { high: 3, medium: 2, low: 1 } as const;
+    const matched = calls
+      .map((c) => ({ call: c, match: matchCall(c, profile) }))
+      .filter((x): x is { call: OpenCall; match: CallMatch } => x.match !== null)
+      .sort((a, b) => rank[b.match.band] - rank[a.match.band]);
+    const matchedKeys = new Set(matched.map((m) => m.call.pubKey));
+    const rest = calls.filter((c) => !matchedKeys.has(c.pubKey));
+
+    forYou.innerHTML = '';
+    forYou.append(el('h2', {}, '✨ For you'));
+    if (!matched.length) forYou.append(el('p', { class: 'muted' }, 'No calls match your interests yet.'));
+    for (const m of matched) forYou.append(callCard(m.call, m.match));
+
+    others.innerHTML = '';
+    others.append(el('h2', {}, 'All open calls'));
+    if (!rest.length) others.append(el('p', { class: 'muted' }, calls.length ? '(all shown above)' : 'Nobody has posted a call yet. Be the first!'));
+    for (const c of rest) others.append(callCard(c, null));
+
+    status.textContent = `${calls.length} open call${calls.length === 1 ? '' : 's'} on the board.`;
+  };
+
+  const post = el('button', {}, '📣 Post an open call');
+  post.onclick = () => postCallScreen(node, profile);
+  const back = el('button', { class: 'ghost' }, 'Back');
+  back.onclick = () => {
+    membership.close();
+    home(node);
+  };
+
+  screen(
+    el('h1', {}, 'Open calls'),
+    el('p', { class: 'muted' }, "What people nearby are up for. Only coarse details are public — your exact time, place, and contact stay private until you both say yes."),
+    post,
+    status,
+    forYou,
+    others,
+    back,
+  );
+
+  try {
+    await membership.join({
+      onCalls: (cs) => {
+        calls = cs;
+        render();
+      },
+    });
+  } catch {
+    status.textContent = "(couldn't reach the board — check the server is running)";
+  }
+}
+
+function postCallScreen(node: Node, profile: PrivateProfile) {
+  const sel = (id: string, opts: string[], val: string) => {
+    const s = el('select', {}) as HTMLSelectElement;
+    s.id = id;
+    for (const o of opts) s.append(el('option', { value: o }, prettyBand(o)));
+    if (opts.includes(val)) s.value = val;
+    return s;
+  };
+  const activity = sel('activity', ACTIVITY_CLASSES, profile.activityClasses[0] ?? 'games');
+  const time = sel('time', TIME_BANDS, profile.timeBands[0] ?? 'weekend_day');
+  const group = sel('group', GROUP_SIZES, profile.groupPref);
+  const geo = el('input', { value: profile.geoCell, placeholder: 'neighborhood (e.g. northside)' }) as HTMLInputElement;
+  const life = sel('life', ['today', 'this week'], 'this week');
+
+  const publish = el('button', {}, 'Publish to the board');
+  publish.onclick = () => {
+    const HOUR = 3_600_000;
+    const expiry = Date.now() + (life.value === 'today' ? 24 * HOUR : 7 * 24 * HOUR);
+    const call = node.openCall({
+      community: profile.community,
+      activityClass: activity.value,
+      timeBand: time.value,
+      geoCell: geo.value.trim() || profile.geoCell,
+      groupSize: group.value as OpenCall['groupSize'],
+      expiry,
+      nonce: rid(),
+    });
+    // Post over a short-lived membership, then return to the board to see it live.
+    const m = new IntentBoardMembership(node, relayUrl(), profile.community);
+    void m.join({ call }).then(() => {
+      setTimeout(() => {
+        m.close();
+        intentBoardScreen(node, profile);
+      }, 300);
+    });
+  };
+
+  screen(
+    el('h1', {}, 'Post an open call'),
+    el('p', { class: 'muted' }, 'This publishes only coarse, public details — activity, rough time, neighborhood, group size. No exact time, address, name, or contact. Publishing is your OK to share this much.'),
+    el('h2', {}, 'Activity'),
+    activity,
+    el('h2', {}, 'Rough time'),
+    time,
+    el('h2', {}, 'Neighborhood'),
+    geo,
+    el('h2', {}, 'Group size'),
+    group,
+    el('h2', {}, 'Show it for'),
+    life,
+    publish,
+    backBtn(() => intentBoardScreen(node, profile)),
   );
 }
 
@@ -458,10 +607,15 @@ async function connectScreen(node: Node, profile: PrivateProfile) {
 // ---- pair (scanner = initiator) -------------------------------------------
 
 function startConnect(node: Node, profile: PrivateProfile, beacon: PresenceBeacon) {
+  startConnectPeer(node, profile, { pubKey: beacon.pubKey, encPubKey: beacon.encPubKey });
+}
+
+/** Begin a negotiation as initiator against a peer identified by their keys (e.g. from an OpenCall). */
+function startConnectPeer(node: Node, profile: PrivateProfile, peer: { pubKey: string; encPubKey: string }) {
   runSession(node, profile, {
     role: 'initiator',
-    peer: { pubKey: beacon.pubKey, encPubKey: beacon.encPubKey },
-    counterpartFp: fingerprint(beacon.pubKey),
+    peer,
+    counterpartFp: fingerprint(peer.pubKey),
   });
 }
 

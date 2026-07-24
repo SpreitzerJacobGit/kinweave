@@ -196,6 +196,15 @@ changing callers.
   gated negotiation to a committed hangout (`test/intent-negotiate.test.ts`,
   versionHash parity with the reference sim). Sim: `npm run sim -- --calls`. The
   board holds only coarse T0/T1 fields; the negotiation kernel is untouched.
-- **Next:** PWA/MCP surfaces — community + intent create/join/browse/digest UIs,
-  wiring the real attestation bundle from the store into the HELLO and the Session
-  subject-bind; the blinded PoP issuer, VOPRF on @noble ristretto (Milestone 5).
+- **Milestone 5 (intent surfaces, this PR):** the human + agent front doors for
+  the intent board. PWA (`web/app.ts`): an "Open calls" screen that browses the
+  live re-verified board, a "✨ For you" digest (each call scored by `matchCall`),
+  a post-an-open-call form (coarse fields only), and Respond → the existing gated
+  negotiation. MCP (`mcp/server.ts`, driven via `KinweaveAgent`): `post_open_call`
+  / `list_open_calls` (scored) / `respond_to_call`, sharing ONE relay socket with
+  the negotiation. End-to-end tool path proven in `test/mcp-intent.test.ts`
+  (post → discover → respond → committed).
+- **Next:** community create/join surfaces (the intent board currently rides the
+  shared `local`/profile community); wiring the real attestation bundle from the
+  store into the HELLO and the Session subject-bind; the blinded PoP issuer,
+  VOPRF on @noble ristretto.

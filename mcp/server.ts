@@ -18,7 +18,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { Node } from '../src/portable/crypto';
+import { Node, fingerprint } from '../src/portable/crypto';
 import { KinweaveAgent } from '../src/portable/agent';
 import { assembleProfile, validateDraft } from '../src/ai/onboarding';
 import type { PrivateProfile } from '../src/types/profile';
@@ -175,6 +175,55 @@ server.tool(
   async () => {
     if (!agent?.decline()) return text('Nothing is waiting for approval.');
     await agent.waitForNext();
+    return text(statusText());
+  },
+);
+
+server.tool(
+  'kinweave_post_open_call',
+  "Publish a coarse 'open call' to the community board so others can discover the user is up for something. Only PUBLIC coarse details go out — activity, rough time band, neighborhood, group size. No exact time, address, name, or contact. Posting is the user's OK to share this much.",
+  {
+    activityClass: z.enum(['games', 'food', 'outdoors', 'arts', 'sport', 'learning']),
+    timeBand: z.enum(['weekday_day', 'weekday_eve', 'weekend_day', 'weekend_eve']),
+    geoCell: z.string().optional().describe('rough neighborhood, e.g. "northside" — defaults to the Persona\'s'),
+    groupSize: z.enum(['one_on_one', 'small', 'either']).optional(),
+    hours: z.number().optional().describe('how long the call stays live (default 168 = one week)'),
+  },
+  async (a) => {
+    const call = await ensureAgent().postOpenCall(a);
+    return text(`Posted your open call: ${call.activityClass} · ${call.timeBand} · ${call.geoCell} · ${call.groupSize}. Others in your community can see and respond to it. Ask me to list open calls to see who's around.`);
+  },
+);
+
+server.tool(
+  'kinweave_list_open_calls',
+  "List the open calls other people have posted to the community board, each scored against the user's Persona (great / good / possible match). Use this to find someone to reach out to, then kinweave_respond_to_call.",
+  {},
+  async () => {
+    const calls = await ensureAgent().listCalls();
+    if (!calls.length) return text('No open calls on the board right now. You could post one with kinweave_post_open_call.');
+    const rank = { high: 0, medium: 1, low: 2 } as const;
+    const label = { high: '✨ great match', medium: 'good match', low: 'possible match' } as const;
+    const lines = calls
+      .sort((x, y) => (rank[x.match?.band ?? 'low'] ?? 3) - (rank[y.match?.band ?? 'low'] ?? 3))
+      .map(({ call, match }) => {
+        const who = fingerprint(call.pubKey);
+        const bits = [`${call.activityClass} · ${call.timeBand} · ${call.geoCell} · ${call.groupSize}`];
+        if (match) bits.push(`${label[match.band]} (${match.reasons.join('; ')})`);
+        return `• ${bits.join(' — ')}\n  respond with: ${who}`;
+      });
+    return text(`Open calls:\n${lines.join('\n')}`);
+  },
+);
+
+server.tool(
+  'kinweave_respond_to_call',
+  'Respond to someone\'s open call (pass their id from kinweave_list_open_calls). Starts your Personas negotiating; returns the first thing that needs the user\'s approval.',
+  { person: z.string().describe('the id shown under an open call') },
+  async ({ person }) => {
+    const a = ensureAgent();
+    await a.respondToCall(person);
+    await a.waitForNext();
     return text(statusText());
   },
 );
