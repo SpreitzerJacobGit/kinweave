@@ -1,5 +1,9 @@
 # Kinweave
 
+[![CI](https://github.com/SpreitzerJacobGit/kinweave/actions/workflows/ci.yml/badge.svg)](https://github.com/SpreitzerJacobGit/kinweave/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)
+
 A **completely peer-to-peer** social network made of **personal AI Personas** that know their owner and negotiate, on their owner's behalf, with other people's Personas to arrange local, real-world hangouts — inside a **local + hobby community**, with the **human owner in the loop** at every consequential step. No central server, no matchmaking company in the middle: each Persona is a node you control (see [`spec/08-p2p-architecture.md`](spec/08-p2p-architecture.md)).
 
 This repository is the **first deliverable: the negotiation protocol** — the hardest and most valuable piece, because it is where two agents representing two *different, stranger* owners exchange intimate preferences across a trust boundary. It ships as:
@@ -7,7 +11,14 @@ This repository is the **first deliverable: the negotiation protocol** — the h
 1. a **written spec** (`spec/`), the source of truth, and
 2. a **runnable TypeScript simulation** (`src/`, `test/`) that drives two mock Personas — plus an adversarial red-team Persona — end-to-end, with the safety boundaries **structurally enforced** and asserted by tests.
 
-It has since grown into a runnable app — a phone web app, a Claude connector, a real relay, and Claude-powered onboarding — all riding the same tested engine.
+It has since grown into a runnable app — a phone web app, a Claude connector, a real relay, and Claude-powered onboarding — all riding the same tested engine, pinned by 100+ tests (`npm test`, run in CI on every push).
+
+<p align="center">
+  <img src="docs/media/phone-persona.png" alt="Building a Persona — private details stay on the phone" width="270">
+  <img src="docs/media/phone-home.png" alt="Home screen — your Persona is ready to negotiate" width="270">
+  <img src="docs/media/phone-invite.png" alt="Inviting someone — a signed kw1 invite as QR or link" width="270">
+</p>
+<p align="center"><sub>The phone app: build a Persona (secrets never leave the device), then connect by QR or signed invite link. Jump to the <a href="#use-it--three-front-doors-one-p2p-engine">quick start</a>.</sub></p>
 
 ## Use it — three front doors, one P2P engine
 
