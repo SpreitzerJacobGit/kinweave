@@ -14,6 +14,15 @@ import type { LLM, LlmMessage } from './llm';
 import { ONBOARDING_SYSTEM, EXTRACT_SYSTEM } from './prompts';
 import { assertPromptClean } from './scrub';
 import type { BoundaryPrefs, ProfileDraft, ProfileSecrets } from './types';
+import {
+  GROUP_PREFS,
+  ENERGY_LEVELS,
+  SETTING_PREFS,
+  NOVELTY_PREFS,
+  filterActivityClasses,
+  filterTimeBands,
+  oneOf,
+} from '../types/vocab';
 
 /** One conversational onboarding turn. `secretValues` are scrubbed from the outbound prompt. */
 export async function runOnboardingTurn(llm: LLM, history: LlmMessage[], secretValues: readonly string[] = []): Promise<string> {
@@ -75,10 +84,6 @@ const STR = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : 
 /** Validate/coerce an untrusted LLM object into a ProfileDraft (never trust raw output). */
 export function validateDraft(obj: unknown): ProfileDraft {
   const o = (obj ?? {}) as Record<string, unknown>;
-  const groupPref = ['one_on_one', 'small', 'either'].includes(String(o.groupPref)) ? (o.groupPref as ProfileDraft['groupPref']) : 'either';
-  const energy = ['low', 'medium', 'high'].includes(String(o.energyLevel)) ? (o.energyLevel as ProfileDraft['energyLevel']) : 'medium';
-  const setting = ['public_venue', 'outdoor', 'either'].includes(String(o.settingPref)) ? (o.settingPref as ProfileDraft['settingPref']) : 'public_venue';
-  const novelty = ['familiar', 'new', 'either'].includes(String(o.noveltyPref)) ? (o.noveltyPref as ProfileDraft['noveltyPref']) : 'either';
   const mask = Number.isInteger(o.availabilityMask) ? (o.availabilityMask as number) & 0b1111 : 0;
   const handle = STR(o.handle).trim();
   if (!handle) throw new Error('draft missing handle');
@@ -89,12 +94,12 @@ export function validateDraft(obj: unknown): ProfileDraft {
     geoCell: STR(o.geoCell, 'unknown'),
     valueTags: ARR(o.valueTags),
     availabilityMask: mask,
-    groupPref,
-    activityClasses: ARR(o.activityClasses),
-    energyLevel: energy,
-    timeBands: ARR(o.timeBands),
-    settingPref: setting,
+    groupPref: oneOf(GROUP_PREFS, o.groupPref, 'either'),
+    activityClasses: filterActivityClasses(o.activityClasses),
+    energyLevel: oneOf(ENERGY_LEVELS, o.energyLevel, 'medium'),
+    timeBands: filterTimeBands(o.timeBands),
+    settingPref: oneOf(SETTING_PREFS, o.settingPref, 'public_venue'),
     hardConstraints: ARR(o.hardConstraints),
-    noveltyPref: novelty,
+    noveltyPref: oneOf(NOVELTY_PREFS, o.noveltyPref, 'either'),
   };
 }

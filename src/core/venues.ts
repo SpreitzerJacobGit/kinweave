@@ -5,6 +5,8 @@
  * See spec/06-threat-model-and-safety.md §Real-world safety.
  */
 
+import type { ActivityClass } from '../types/vocab';
+
 export interface Venue {
   name: string;
   type: string;
@@ -14,8 +16,8 @@ export interface Venue {
   daytime: boolean;
 }
 
-/** Keyed by coarse activity class. All are public, most staffed + daytime. */
-export const NEUTRAL_VENUES: Readonly<Record<string, Venue>> = {
+/** Keyed by coarse activity class — one per ACTIVITY_CLASS. All public, most staffed + daytime. */
+export const NEUTRAL_VENUES: Readonly<Record<ActivityClass, Venue>> = {
   games: { name: 'The Meeple Café', type: 'board-game café', geoCell: 'downtown-commons', isPublic: true, staffed: true, daytime: true },
   food: { name: 'Riverside Market Hall', type: 'public food hall', geoCell: 'downtown-commons', isPublic: true, staffed: true, daytime: true },
   outdoors: { name: 'Cedar Park (main lawn)', type: 'public park', geoCell: 'cedar-park', isPublic: true, staffed: false, daytime: true },
@@ -34,5 +36,5 @@ const FALLBACK: Venue = {
 };
 
 export function venueFor(activityClass: string): Venue {
-  return NEUTRAL_VENUES[activityClass] ?? FALLBACK;
+  return (NEUTRAL_VENUES as Readonly<Record<string, Venue>>)[activityClass] ?? FALLBACK;
 }

@@ -43,8 +43,10 @@ Restart Claude Desktop. (`KINWEAVE_HOME` optionally sets where keys/profile live
 
 ## Use it — just talk to Claude
 
-- **"Set me up on Kinweave."** Claude chats with you about what you like, then
-  calls `kinweave_save_persona`. It won't ask for your legal name or address.
+- **"Set me up on Kinweave."** Claude runs the guided interview from
+  [`spec/11-persona-interview.md`](../spec/11-persona-interview.md) — a short, warm
+  chat about your interests, values, availability, and idea of fun — then calls
+  `kinweave_save_persona`. It won't ask for your legal name, address, or contact.
 - **"Make a code to connect with my friend."** → `kinweave_make_connect_code`;
   Claude gives you a code to send them.
 - **"My friend gave me this code: …"** → `kinweave_use_connect_code`.
@@ -71,6 +73,9 @@ details are exchanged and you're set.
 - **No API key.** The intelligence is your Claude subscription, used as intended.
 - **Zone O stays local.** Keys + profile live in `KINWEAVE_HOME`; the relay and any
   counterpart only ever get what the Disclosure Gate permits and you approve.
+- **Already built a Persona before installing the connector?** If an AI ran the
+  interview and wrote `~/.kinweave/persona-draft.json`, this server adopts it
+  automatically on first launch — no need to redo the interview.
 - Proven end-to-end in Node (`test/mcp-agent.test.ts`): two agents connect by code
   and reach the same committed hangout over the real relay. The MCP layer itself is
   a thin wrapper; give it a real run in Claude and tell us how the chat flow feels.
