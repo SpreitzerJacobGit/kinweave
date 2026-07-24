@@ -66,6 +66,7 @@ export class KinweaveAgent {
 
   private board: IntentBoardMembership | null = null;
   private callSeq = 0;
+  private communityId: string;
 
   private cpName = '';
   private cpFp = '';
@@ -76,7 +77,25 @@ export class KinweaveAgent {
     private readonly relayUrl: string,
     /** Called when a hangout commits — the caller persists it as a connection. */
     private readonly onConnected?: (info: { id: string; name: string; hangout?: string }) => void,
-  ) {}
+  ) {
+    this.communityId = profile.community;
+  }
+
+  /** Which community the intent board keys on. Defaults to the Persona's; switch it before posting/listing. */
+  setCommunity(id: string): void {
+    if (id === this.communityId) return;
+    this.communityId = id;
+    // Drop any board joined for the previous community so the next op re-joins.
+    if (this.board && !this.session) {
+      this.board.close();
+      this.board = null;
+      this.conn = null;
+    }
+  }
+
+  community(): string {
+    return this.communityId;
+  }
 
   status(): AgentStatus {
     return {
@@ -118,7 +137,7 @@ export class KinweaveAgent {
     await this.ensureBoard();
     const HOUR = 3_600_000;
     const call = this.node.openCall({
-      community: this.profile.community,
+      community: this.communityId,
       activityClass: p.activityClass,
       timeBand: p.timeBand,
       geoCell: p.geoCell ?? this.profile.geoCell,
@@ -195,7 +214,7 @@ export class KinweaveAgent {
    */
   private async ensureBoard(): Promise<void> {
     if (this.board) return;
-    const b = new IntentBoardMembership(this.node, this.relayUrl, this.profile.community);
+    const b = new IntentBoardMembership(this.node, this.relayUrl, this.communityId);
     await b.join({
       onEnvelope: (env) => {
         if (!this.session) {
