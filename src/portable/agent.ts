@@ -7,9 +7,11 @@
  * Pure of MCP/stdio so it can be tested end-to-end in Node (see test/mcp-agent.test.ts).
  */
 
-import { Node, fingerprint } from './crypto';
+import { Node, fingerprint, type OpenCall } from './crypto';
 import { makeInvite, encodeKw1, decodeKw1, verifyInvite } from './invite';
 import { connectRelay, type RelayConn } from './relay-connect';
+import { IntentBoardMembership } from './intent-connect';
+import { matchCall, type CallMatch } from '../core/call-match';
 import { Session } from './session';
 import { NegotiationDriver } from '../core/negotiation-driver';
 import { Persona } from '../persona/persona';
@@ -62,6 +64,9 @@ export class KinweaveAgent {
   private connState: ConnState = 'idle';
   private waiters: (() => void)[] = [];
 
+  private board: IntentBoardMembership | null = null;
+  private callSeq = 0;
+
   private cpName = '';
   private cpFp = '';
 
@@ -108,6 +113,40 @@ export class KinweaveAgent {
     this.session.start();
   }
 
+  /** Publish a coarse OpenCall to the community intent board (T0/T1 only — owner-authored). */
+  async postOpenCall(p: { activityClass: string; timeBand: string; geoCell?: string; groupSize?: OpenCall['groupSize']; hours?: number }): Promise<OpenCall> {
+    await this.ensureBoard();
+    const HOUR = 3_600_000;
+    const call = this.node.openCall({
+      community: this.profile.community,
+      activityClass: p.activityClass,
+      timeBand: p.timeBand,
+      geoCell: p.geoCell ?? this.profile.geoCell,
+      groupSize: p.groupSize ?? this.profile.groupPref,
+      expiry: Date.now() + (p.hours ?? 168) * HOUR,
+      nonce: `${this.node.id}-${++this.callSeq}`,
+    });
+    this.board!.postCall(call);
+    return call;
+  }
+
+  /** The verified open calls on the board (excluding our own), each scored locally against our profile. */
+  async listCalls(settleMs = 250): Promise<{ call: OpenCall; match: CallMatch | null }[]> {
+    await this.ensureBoard();
+    if (!this.board!.calls().length) await new Promise((r) => setTimeout(r, settleMs)); // let the first snapshot arrive
+    return this.board!.calls().map((c) => ({ call: c, match: matchCall(c, this.profile) }));
+  }
+
+  /** Respond to someone's open call (by their pubKey or fingerprint) — starts the gated negotiation as initiator. */
+  async respondToCall(who: string): Promise<void> {
+    await this.ensureBoard();
+    const call = this.board!.calls().find((c) => c.pubKey === who || fingerprint(c.pubKey) === who);
+    if (!call) throw new Error('no open call from that person is on the board');
+    this.session = this.build({ pubKey: call.pubKey, encPubKey: call.encPubKey }, fingerprint(call.pubKey), 'initiator');
+    this.connState = 'negotiating';
+    this.session.start();
+  }
+
   approve(): boolean {
     if (!this.pendingGate || !this.session) return false;
     this.pendingGate = null;
@@ -135,7 +174,8 @@ export class KinweaveAgent {
   }
 
   close(): void {
-    this.conn?.close();
+    if (this.board) this.board.close();
+    else this.conn?.close();
   }
 
   // ---- internals -----------------------------------------------------------
@@ -144,6 +184,29 @@ export class KinweaveAgent {
     const w = this.waiters;
     this.waiters = [];
     for (const f of w) f();
+  }
+
+  /**
+   * Join the community intent board and make ITS socket the agent's single relay
+   * connection — so browsing, posting, and the resulting negotiation all share
+   * one fingerprint subscription (a second socket for the same identity would
+   * steal mailbox delivery). Inbound envelopes route to the live session, or spin
+   * up a responder session if someone answers a call we posted.
+   */
+  private async ensureBoard(): Promise<void> {
+    if (this.board) return;
+    const b = new IntentBoardMembership(this.node, this.relayUrl, this.profile.community);
+    await b.join({
+      onEnvelope: (env) => {
+        if (!this.session) {
+          this.session = this.build({ pubKey: env.from, encPubKey: env.fromEnc }, fingerprint(env.from), 'responder');
+          this.connState = 'negotiating';
+        }
+        this.session.onEnvelope(env);
+      },
+    });
+    this.board = b;
+    this.conn = b.connection();
   }
 
   private async ensureConn(role: 'initiator' | 'responder'): Promise<void> {

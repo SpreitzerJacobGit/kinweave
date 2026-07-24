@@ -123,6 +123,39 @@ export function beaconBody(b: Omit<PresenceBeacon, 'sig'>) {
   return { pubKey: b.pubKey, encPubKey: b.encPubKey, community: b.community, hobbyTags: b.hobbyTags, geoCell: b.geoCell };
 }
 
+/**
+ * An OpenCall (spec/10 — structured intent atom). A signed, discoverable "I'd do
+ * X, this time-band, this neighborhood" posted to the community intent board.
+ * Carries ONLY T0/T1-coarse fields — no coordinate, no exact time, no PII — so it
+ * is safe to publish. `encPubKey` lets a responder seal the reply invite; a match
+ * still enters the full gated pairwise negotiation before anything specific leaks.
+ */
+export interface OpenCall {
+  pubKey: string; // caller signing pubkey (identity)
+  encPubKey: string; // caller encryption pubkey — seal target for the reply invite
+  community: string;
+  activityClass: string; // coarse — 'coffee' | 'games' | ...
+  timeBand: string; // coarse band — 'weekend_day' etc, never an exact time
+  geoCell: string; // neighborhood-level, never a coordinate
+  groupSize: 'one_on_one' | 'small' | 'either';
+  expiry: number; // epoch ms — the call self-expires (board TTL also applies)
+  nonce: string; // caller-supplied idempotency token (kept deterministic for the sim)
+  sig: string; // signed by the caller's identity key
+}
+export function callBody(c: Omit<OpenCall, 'sig'>) {
+  return {
+    pubKey: c.pubKey,
+    encPubKey: c.encPubKey,
+    community: c.community,
+    activityClass: c.activityClass,
+    timeBand: c.timeBand,
+    geoCell: c.geoCell,
+    groupSize: c.groupSize,
+    expiry: c.expiry,
+    nonce: c.nonce,
+  };
+}
+
 /** A device node: a signing identity + an encryption key, both persistable. */
 export class Node {
   readonly identity: Identity;
@@ -147,5 +180,21 @@ export class Node {
   beacon(community: string, hobbyTags: string[], geoCell: string): PresenceBeacon {
     const body = { pubKey: this.identity.pubKey, encPubKey: this.enc.pubKey, community, hobbyTags, geoCell };
     return { ...body, sig: this.identity.sign(beaconBody(body)) };
+  }
+  /**
+   * Build a signed OpenCall. The caller supplies `expiry` + `nonce` (kept out of
+   * this factory so the sim stays deterministic — no Date.now/Math.random here).
+   */
+  openCall(params: {
+    community: string;
+    activityClass: string;
+    timeBand: string;
+    geoCell: string;
+    groupSize: OpenCall['groupSize'];
+    expiry: number;
+    nonce: string;
+  }): OpenCall {
+    const body = { pubKey: this.identity.pubKey, encPubKey: this.enc.pubKey, ...params };
+    return { ...body, sig: this.identity.sign(callBody(body)) };
   }
 }
